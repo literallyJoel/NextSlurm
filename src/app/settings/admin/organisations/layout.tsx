@@ -4,19 +4,19 @@ import { useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { motion } from "framer-motion";
 
-export default function UserAdminSettingsLayout({
+export default function OrganisationAdminSettingsLayout({
   children,
-  userlist,
-  createUserForm,
   orgList,
+  createOrgForm,
+  memberList
 }: {
   children: ReactNode;
-  userlist: ReactNode;
-  createUserForm: ReactNode;
   orgList: ReactNode;
+  createOrgForm: ReactNode;
+  memberList: ReactNode;
 }) {
   const params = useSearchParams();
-  const selectedUser = params.get("selected");
+  const selectedOrganisation = params.get("selected");
 
   return (
     <motion.div
@@ -26,8 +26,8 @@ export default function UserAdminSettingsLayout({
       transition={{ type: "spring", duration: 1, bounce: 0.6 }}
       className="flex h-[90vh] w-full flex-row gap-1 rounded-b-lg bg-slate-800 p-2"
     >
-      {selectedUser ? orgList : userlist}
-      {createUserForm}
+      {selectedOrganisation ? memberList : orgList}
+      {createOrgForm}
     </motion.div>
   );
 }

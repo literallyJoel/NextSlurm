@@ -17,6 +17,7 @@ import { api } from "@/trpc/react";
 import { cn } from "@/lib/utils";
 import { Table } from "@/components/table";
 import { useRouter } from "next/navigation";
+import { Suspense } from "react";
 
 // Column Definitions
 const columns = (): ColumnDef<User & { role: number }>[] => [
@@ -132,13 +133,14 @@ const columns = (): ColumnDef<User & { role: number }>[] => [
 ];
 
 export default function Userlist() {
-  const { data: users, isLoading } = api.users.get.useQuery();
+  const [users, usersQuery] = api.users.get.useSuspenseQuery();
 
-  if (isLoading) return <>Loading...</>;
   return (
-    <div className="flex w-9/12 flex-col gap-2 rounded-lg bg-slate-700 p-4">
-      <div className="text-xl font-bold text-white">Users</div>
-      <Table columns={columns()} data={users!} />
-    </div>
+    <Suspense fallback={<div>Loading!!...</div>}>
+      <div className="flex w-9/12 flex-col gap-2 rounded-lg bg-slate-700 p-4">
+        <div className="text-xl font-bold text-white">Users</div>
+        <Table columns={columns()} data={users!} />
+      </div>
+    </Suspense>
   );
 }
