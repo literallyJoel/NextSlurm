@@ -10,16 +10,20 @@ export default function OrganisationAdminSettingsLayout({
   createOrgForm,
   memberList,
   addMemberForm,
+  renameOrgForm,
+  deleteOrg,
 }: {
   children: ReactNode;
   orgList: ReactNode;
   createOrgForm: ReactNode;
   memberList: ReactNode;
   addMemberForm: ReactNode;
+  renameOrgForm: ReactNode;
+  deleteOrg: ReactNode;
 }) {
   const params = useSearchParams();
   const selectedOrganisation = params.get("selected");
-
+  const toDelete = params.get("delete");
   return (
     <motion.div
       initial={{ opacity: 0, y: 100 }}
@@ -28,8 +32,15 @@ export default function OrganisationAdminSettingsLayout({
       transition={{ type: "spring", duration: 1, bounce: 0.6 }}
       className="flex h-[90vh] w-full flex-row gap-1 rounded-b-lg bg-slate-800 p-2"
     >
+      {toDelete && deleteOrg}
       {selectedOrganisation ? memberList : orgList}
-      {selectedOrganisation ? addMemberForm : createOrgForm}
+      {selectedOrganisation ? (
+        <div className="flex w-3/12 flex-col justify-between gap-1">
+          {addMemberForm} {renameOrgForm}
+        </div>
+      ) : (
+        createOrgForm
+      )}
     </motion.div>
   );
 }

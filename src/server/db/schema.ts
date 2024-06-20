@@ -149,3 +149,11 @@ export const providerConfiguration = createTable("providerConfiguration", {
   clientId: text("clientId", { length: 255 }).notNull(),
   clientSecret: text("clientSecret", { length: 255 }).notNull(),
 });
+
+//Literally just exists so we know when to allow the setup process
+//This was originally done by checking if a user and organisation had been created
+//But the optionality of external providers means it needs it's own value somewhere
+export const config = createTable("configuration", {
+  name: text("name", { length: 255 }).notNull().primaryKey(),
+  value: text("value").notNull(),
+});

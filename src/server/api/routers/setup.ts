@@ -1,30 +1,35 @@
 import {
   accounts,
+  config,
   organisationMembers,
   organisations,
   users,
 } from "@/server/db/schema";
-import { createTRPCRouter, publicProcedure } from "../trpc";
-import { ne } from "drizzle-orm";
+import {
+  createTRPCRouter,
+  globalAdminProcedure,
+  publicProcedure,
+} from "../trpc";
+import { eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import argon2 from "argon2";
 export const setupRouter = createTRPCRouter({
   //Used to determine whether to redirect to the first time setup screen
   getRequiresSetup: publicProcedure.query(async ({ ctx }) => {
+    //We don't need to care about the actual value, as if it's not setup, nothing will be there.
     return (
       (
         await ctx.db
-          .select({ name: users.name })
-          .from(users)
-          /*
-          A default user exists so we can retain job types etc when a users account is deleted,
-          so we need to discount it when determining whether to run setup.
-          */
-          .where(ne(users.id, "default"))
+          .select()
+          .from(config)
+          .where(eq(config.name, "isSetup"))
           .limit(1)
       ).length === 0
     );
+  }),
+  completeSetup: globalAdminProcedure.mutation(async ({ ctx }) => {
+    await ctx.db.insert(config).values({ name: "isSetup", value: "true" });
   }),
   /*
   Use for creating the initial user and organisation. 

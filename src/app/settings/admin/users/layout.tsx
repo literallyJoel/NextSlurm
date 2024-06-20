@@ -10,17 +10,19 @@ export default function UserAdminSettingsLayout({
   createUserForm,
   orgList,
   deleteUser,
+  removefromorg,
 }: {
   children: ReactNode;
   userlist: ReactNode;
   createUserForm: ReactNode;
   orgList: ReactNode;
   deleteUser: ReactNode;
+  removefromorg: ReactNode;
 }) {
   const params = useSearchParams();
   const selectedUser = params.get("selected");
   const toDelete = params.get("delete");
-
+  const remove = params.get("remove");
   return (
     <motion.div
       initial={{ opacity: 0, y: 100 }}
@@ -29,6 +31,7 @@ export default function UserAdminSettingsLayout({
       transition={{ type: "spring", duration: 1, bounce: 0.6 }}
       className="flex h-[90vh] w-full flex-row gap-1 rounded-b-lg bg-slate-800 p-2"
     >
+      {remove && removefromorg}
       {toDelete && deleteUser}
       {selectedUser ? orgList : userlist}
       {createUserForm}

@@ -3,15 +3,22 @@ import Link from "next/link";
 import { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
+import { useSession } from "next-auth/react";
 
-export default function AdminSettingsLayour({
+export default function AdminSettingsLayout({
   children,
 }: {
   children: ReactNode;
 }) {
+  const router = useRouter();
+  const session = useSession();
   const pathname = usePathname();
+
+  if (session.data && session.data?.user.role !== 1) {
+    router.replace("/");
+  }
   return (
     <div className="min-w-screen min-h-screen bg-slate-900">
       <div className="flex w-full flex-row items-center justify-center p-2 text-xl font-semibold text-white">

@@ -60,17 +60,19 @@ const columns = (): ColumnDef<{ id: string; name: string }>[] => {
                         "cursor-pointer focus:bg-slate-700 focus:text-white",
                       )}
                     >
-                      View Members
+                      Manage Organisation
                     </DropdownMenuItem>
                   </button>
-                  <DropdownMenuSeparator />
-                  <button className="w-full">
-                    <DropdownMenuItem className="cursor-pointer focus:bg-slate-700 focus:text-white">
-                      Rename Organisation
-                    </DropdownMenuItem>
-                  </button>
-                  <button className="w-full">
-                    <DropdownMenuItem className="cursor-pointer focus:bg-slate-700 focus:text-white">
+
+                  <button
+                    className="w-full"
+                    onClick={() =>
+                      router.push(
+                        `?delete=${row.original.id}&name=${row.original.name}`,
+                      )
+                    }
+                  >
+                    <DropdownMenuItem className="cursor-pointer text-red-500 focus:bg-slate-600 focus:text-red-500">
                       Delete Organisation
                     </DropdownMenuItem>
                   </button>

@@ -5,9 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 export default function DeleteUserModal() {
   //The modal only shows if the param is present, so we just cast to a string
-  const userToDelete = useSearchParams().get("delete") as string;
-  const userName = useSearchParams().get("name") as string;
-  const deleteUser = api.users.delete.useMutation();
+  const orgToDelete = useSearchParams().get("delete") as string;
+  const orgName = useSearchParams().get("name") as string;
+  const deleteOrg = api.organisations.delete.useMutation();
   const router = useRouter();
   const utils = api.useUtils();
   return (
@@ -20,10 +20,11 @@ export default function DeleteUserModal() {
         className="top-4/12 mb-24 flex h-1/4 w-1/2 flex-col items-center gap-2 rounded-lg bg-slate-900 p-12"
       >
         <span className="text-2xl font-bold text-white">
-          Are you sure you want to delete {userName}?
+          Are you sure you want to delete {orgName}?
         </span>
-        <span className="text-xl font-bold text-red-400">
-          This cannot be undone.
+        <span className="p-2 text-center text-xl font-bold text-red-400">
+          All users will be removed from the organisation, and shared resources
+          will only be accessible to the creator. This cannot be undone.
         </span>
         <div className="flex-rowitems-center mt-auto flex w-full justify-center gap-4">
           <motion.button
@@ -35,12 +36,12 @@ export default function DeleteUserModal() {
             whileTap={{ scale: 0.9 }}
             className="w-4/12 rounded-lg bg-red-400 p-2 text-white"
             onClick={() =>
-              deleteUser.mutate(
-                { userId: userToDelete },
+              deleteOrg.mutate(
+                { organisationId: orgToDelete },
                 {
                   onSuccess: () => {
-                    utils.users.get.invalidate();
-                    router.push("/settings/admin/users");
+                    utils.organisations.get.invalidate();
+                    router.push("/settings/admin/organisations");
                   },
                 },
               )
@@ -54,7 +55,7 @@ export default function DeleteUserModal() {
             }}
             whileTap={{ scale: 0.9 }}
             className="w-4/12 rounded-lg bg-slate-500 p-2 text-white"
-            onClick={() => router.push("/settings/admin/users")}
+            onClick={() => router.push("/settings/admin/organisations")}
           >
             Cancel
           </motion.button>

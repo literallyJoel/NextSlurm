@@ -3,11 +3,12 @@ import { api } from "@/trpc/react";
 import { motion } from "framer-motion";
 import { useRouter, useSearchParams } from "next/navigation";
 
-export default function DeleteUserModal() {
+export default function RemoveMemberModal() {
   //The modal only shows if the param is present, so we just cast to a string
-  const userToDelete = useSearchParams().get("delete") as string;
-  const userName = useSearchParams().get("name") as string;
-  const deleteUser = api.users.delete.useMutation();
+  const userToRemove = useSearchParams().get("selected") as string;
+  const orgName = useSearchParams().get("name") as string;
+  const orgId = useSearchParams().get("remove") as string;
+  const remove = api.organisations.removeMember.useMutation();
   const router = useRouter();
   const utils = api.useUtils();
   return (
@@ -20,10 +21,10 @@ export default function DeleteUserModal() {
         className="top-4/12 mb-24 flex h-1/4 w-1/2 flex-col items-center gap-2 rounded-lg bg-slate-900 p-12"
       >
         <span className="text-2xl font-bold text-white">
-          Are you sure you want to delete {userName}?
+          Are you sure you want to remove this user from {orgName}?
         </span>
         <span className="text-xl font-bold text-red-400">
-          This cannot be undone.
+          They will lose access to this organisations shared resources.
         </span>
         <div className="flex-rowitems-center mt-auto flex w-full justify-center gap-4">
           <motion.button
@@ -35,18 +36,18 @@ export default function DeleteUserModal() {
             whileTap={{ scale: 0.9 }}
             className="w-4/12 rounded-lg bg-red-400 p-2 text-white"
             onClick={() =>
-              deleteUser.mutate(
-                { userId: userToDelete },
+              remove.mutate(
+                { userId: userToRemove, organisationId: orgId },
                 {
                   onSuccess: () => {
-                    utils.users.get.invalidate();
-                    router.push("/settings/admin/users");
+                    utils.users.getOrganisations.invalidate();
+                    router.back();
                   },
                 },
               )
             }
           >
-            Delete
+            Remove User
           </motion.button>
           <motion.button
             whileHover={{
@@ -54,7 +55,7 @@ export default function DeleteUserModal() {
             }}
             whileTap={{ scale: 0.9 }}
             className="w-4/12 rounded-lg bg-slate-500 p-2 text-white"
-            onClick={() => router.push("/settings/admin/users")}
+            onClick={() => router.back()}
           >
             Cancel
           </motion.button>

@@ -18,12 +18,32 @@ import { cn } from "@/lib/utils";
 import { Table } from "@/components/table";
 import { useRouter } from "next/navigation";
 import { Suspense } from "react";
+import { useSession } from "next-auth/react";
 
 // Column Definitions
 const columns = (): ColumnDef<User & { role: number }>[] => [
   {
     accessorKey: "name",
     header: "Name",
+    cell: (cell) => {
+      {
+        const session = useSession();
+
+        if (session.data?.user.id !== cell.row.original.id) {
+          return cell.getValue();
+        }
+
+        return (
+          <div className="flex flex-row items-center gap-4">
+            <div>{cell.getValue() as String}</div>
+            <div className="w-1/12 
+            rounded-lg  bg-fuchsia-800 p-2 text-center text-xs">
+              You
+            </div>
+          </div>
+        );
+      }
+    },
   },
   {
     accessorKey: "email",
@@ -65,7 +85,7 @@ const columns = (): ColumnDef<User & { role: number }>[] => [
       const utils = api.useUtils();
       const { id } = row.original;
       const { data: user } = api.users.get.useQuery({ userId: id });
-
+      const session = useSession();
       return (
         <DropdownMenu>
           <motion.button whileTap={{ scale: 0.8 }}>
@@ -87,38 +107,44 @@ const columns = (): ColumnDef<User & { role: number }>[] => [
               className="flex flex-col"
             >
               <DropdownMenuLabel>Actions</DropdownMenuLabel>
-              <button
-                className="w-full"
-                onClick={() =>
-                  router.push(`?delete=${id}&name=${row.original.name}`)
-                }
-              >
-                <DropdownMenuItem className="cursor-pointer focus:bg-slate-700 focus:text-white">
-                  Delete User
-                </DropdownMenuItem>
-              </button>
-              <DropdownMenuSeparator />
-              <button className="w-full">
-                <DropdownMenuItem
-                  onClick={() => {
-                    changeUserRole.mutate(
-                      {
-                        userId: id,
-                        role: user && user[0] && user[0].role === 0 ? 1 : 0,
-                      },
-                      {
-                        onSuccess: (user) =>
-                          utils.users.get.invalidate({ userId: user?.id }),
-                      },
-                    );
-                  }}
-                  className="cursor-pointer focus:bg-slate-700 focus:text-white"
-                >
-                  {user && user[0]?.role === 0
-                    ? "Promote to Admin"
-                    : "Demote to User"}
-                </DropdownMenuItem>
-              </button>
+              {session.data?.user.id !== row.original.id && (
+                <>
+                  <button
+                    className="w-full"
+                    onClick={() =>
+                      router.push(`?delete=${id}&name=${row.original.name}`)
+                    }
+                  >
+                    <DropdownMenuItem className="cursor-pointer focus:bg-slate-700 focus:text-red-500 text-red-500">
+                      Delete User
+                    </DropdownMenuItem>
+                  </button>
+                  <DropdownMenuSeparator />
+
+                  <button className="w-full">
+                    <DropdownMenuItem
+                      onClick={() => {
+                        changeUserRole.mutate(
+                          {
+                            userId: id,
+                            role: user && user[0] && user[0].role === 0 ? 1 : 0,
+                          },
+                          {
+                            onSuccess: (user) =>
+                              utils.users.get.invalidate({ userId: user?.id }),
+                          },
+                        );
+                      }}
+                      className="cursor-pointer focus:bg-slate-700 focus:text-white"
+                    >
+                      {user && user[0]?.role === 0
+                        ? "Promote to Admin"
+                        : "Demote to User"}
+                    </DropdownMenuItem>
+                  </button>
+                </>
+              )}
+
               <button className="w-full">
                 <DropdownMenuItem
                   className={cn(
