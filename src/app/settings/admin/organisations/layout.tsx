@@ -8,12 +8,14 @@ export default function OrganisationAdminSettingsLayout({
   children,
   orgList,
   createOrgForm,
-  memberList
+  memberList,
+  addMemberForm,
 }: {
   children: ReactNode;
   orgList: ReactNode;
   createOrgForm: ReactNode;
   memberList: ReactNode;
+  addMemberForm: ReactNode;
 }) {
   const params = useSearchParams();
   const selectedOrganisation = params.get("selected");
@@ -27,7 +29,7 @@ export default function OrganisationAdminSettingsLayout({
       className="flex h-[90vh] w-full flex-row gap-1 rounded-b-lg bg-slate-800 p-2"
     >
       {selectedOrganisation ? memberList : orgList}
-      {createOrgForm}
+      {selectedOrganisation ? addMemberForm : createOrgForm}
     </motion.div>
   );
 }

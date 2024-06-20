@@ -1,7 +1,7 @@
 import { db as _db } from "@/server/db";
 import { organisationMembers, organisations, users } from "@/server/db/schema";
 import { and, eq } from "drizzle-orm";
-import { string, z } from "zod";
+import { z } from "zod";
 import {
   createTRPCRouter,
   globalAdminProcedure,
@@ -248,11 +248,20 @@ export const organisationsRouter = createTRPCRouter({
     }),
   addMember: protectedProcedure
     .input(
-      z.object({
-        organisationId: z.string().uuid(),
-        userId: z.string().uuid(),
-        role: z.number().min(0).max(2),
-      }),
+      z.union([
+        z.object({
+          organisationId: z.string().uuid(),
+          userId: z.string().uuid(),
+          userEmail: z.undefined(),
+          role: z.number().min(0).max(2),
+        }),
+        z.object({
+          organisationId: z.string().uuid(),
+          userId: z.undefined(),
+          userEmail: z.string().email(),
+          role: z.number().min(0).max(2),
+        }),
+      ]),
     )
     .mutation(async ({ ctx, input }) => {
       //Check the requestor is a global admin or admin in the requested organisation
@@ -268,10 +277,28 @@ export const organisationsRouter = createTRPCRouter({
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
-      //Add the member
-      return (
-        await ctx.db.insert(organisationMembers).values(input).returning()
-      )[0];
+      //If they're being adde by Id, we can just add the member
+      if (input.userId) {
+        return (
+          await ctx.db.insert(organisationMembers).values(input).returning()
+        )[0];
+      } else {
+        //Otherwise, we need to check the user exists and grab their id
+        const user = await ctx.db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.email, input.userEmail!));
+        if (user[0]) {
+          return await ctx.db
+            .insert(organisationMembers)
+            .values({
+              organisationId: input.organisationId,
+              userId: user[0].id,
+              role: input.role,
+            })
+            .returning();
+        }
+      }
     }),
   removeMember: protectedProcedure
     .input(

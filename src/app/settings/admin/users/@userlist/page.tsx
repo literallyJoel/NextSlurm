@@ -87,7 +87,12 @@ const columns = (): ColumnDef<User & { role: number }>[] => [
               className="flex flex-col"
             >
               <DropdownMenuLabel>Actions</DropdownMenuLabel>
-              <button className="w-full">
+              <button
+                className="w-full"
+                onClick={() =>
+                  router.push(`?delete=${id}&name=${row.original.name}`)
+                }
+              >
                 <DropdownMenuItem className="cursor-pointer focus:bg-slate-700 focus:text-white">
                   Delete User
                 </DropdownMenuItem>
