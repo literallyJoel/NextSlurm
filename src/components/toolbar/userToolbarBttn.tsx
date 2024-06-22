@@ -61,7 +61,7 @@ export default function UserToolbarBttn() {
         </motion.button>
 
         <motion.ul
-          className="absolute top-16 flex w-2/12 flex-col items-center gap-2 bg-slate-700 p-1"
+          className="absolute top-16 flex w-2/12 flex-col items-center gap-2 bg-slate-600 p-1"
           ref={dropdownRef}
           variants={{
             open: {

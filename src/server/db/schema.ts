@@ -159,9 +159,45 @@ export const config = createTable("configuration", {
 });
 
 export const jobTypes = createTable("jobType", {
-  id: text("id").notNull().primaryKey().$defaultFn(() => v4()),
+  id: text("id")
+    .notNull()
+    .primaryKey()
+    .$defaultFn(() => v4()),
   name: text("name").notNull(),
   description: text("description").notNull(),
   script: text("script").notNull(),
-  
-})
+  createdBy: text("createdBy")
+    .references(() => users.id)
+    .notNull(),
+  hasFileUpload: int("hasFileUpload", { mode: "boolean" }).notNull(),
+  arrayJob: int("arrayJob", { mode: "boolean" }).notNull(),
+});
+
+export const jobTypesParameters = createTable("jobTypeParameter", {
+  id: text("id")
+    .notNull()
+    .primaryKey()
+    .$defaultFn(() => v4()),
+  jobTypeId: text("jobTypeId")
+    .notNull()
+    .references(() => jobTypes.id),
+  name: text("name").notNull(),
+  defaultValue: text("defaultValue"),
+  type: text("type").notNull(),
+});
+export const jobTypesRelations = relations(jobTypes, ({ one, many }) => ({
+  createdBy: one(users, {
+    fields: [jobTypes.createdBy],
+    references: [users.id],
+  }),
+  parameters: many(jobTypesParameters),
+  sharedJobTypes: many(sharedJobTypes),
+}));
+
+export const sharedJobTypes = createTable("sharedJobType", {
+  id: text("id").notNull().primaryKey().$defaultFn(() => v4()),
+  jobTypeId: text("jobTypeId").references(() => jobTypes.id).notNull(),
+  organisationId: text("organisationId").references(() => organisations.id),
+  userId: text("userId").references(() => users.id),
+});
+
