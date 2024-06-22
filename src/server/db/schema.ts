@@ -1,4 +1,4 @@
-import { relations, sql } from "drizzle-orm";
+import { desc, relations, sql } from "drizzle-orm";
 import {
   index,
   int,
@@ -157,3 +157,11 @@ export const config = createTable("configuration", {
   name: text("name", { length: 255 }).notNull().primaryKey(),
   value: text("value").notNull(),
 });
+
+export const jobTypes = createTable("jobType", {
+  id: text("id").notNull().primaryKey().$defaultFn(() => v4()),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  script: text("script").notNull(),
+  
+})

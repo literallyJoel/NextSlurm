@@ -36,8 +36,10 @@ const columns = (): ColumnDef<User & { role: number }>[] => [
         return (
           <div className="flex flex-row items-center gap-4">
             <div>{cell.getValue() as String}</div>
-            <div className="w-1/12 
-            rounded-lg  bg-fuchsia-800 p-2 text-center text-xs">
+            <div
+              className="min-w-1/12 
+            rounded-lg  bg-fuchsia-800 p-2 text-center text-xs"
+            >
               You
             </div>
           </div>
@@ -115,7 +117,7 @@ const columns = (): ColumnDef<User & { role: number }>[] => [
                       router.push(`?delete=${id}&name=${row.original.name}`)
                     }
                   >
-                    <DropdownMenuItem className="cursor-pointer focus:bg-slate-700 focus:text-red-500 text-red-500">
+                    <DropdownMenuItem className="cursor-pointer text-red-500 focus:bg-slate-700 focus:text-red-500">
                       Delete User
                     </DropdownMenuItem>
                   </button>
