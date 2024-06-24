@@ -16,7 +16,7 @@ import { MoreHorizontal } from "lucide-react";
 
 import { api } from "@/trpc/react";
 
-import React, { Suspense } from "react";
+import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Table } from "@/components/table";
 import {
@@ -283,18 +283,22 @@ const BCrumbs = ({ type }: { type: "admin" | "user" }) => {
   );
 };
 
-export default function MemberList({type}: {type: "admin" | "user"}) {
+export default function MemberList({ type }: { type: "admin" | "user" }) {
   const organisationId = useSearchParams().get("selected");
-  const [members, membersQuery] = api.organisations.getMember.useSuspenseQuery({
-    organisationId: organisationId!,
-  });
+  const { data: members, isLoading } = api.organisations.getMember.useQuery(
+    { organisationId: organisationId! },
+    {
+      enabled: !!organisationId,
+    },
+  );
 
+  if (isLoading) {
+    return <Loading />;
+  }
   return (
     <div className="flex w-9/12 flex-col gap-2 rounded-lg bg-slate-700 p-4">
-      <Suspense fallback={<div>Loading...</div>}>
-        <BCrumbs type={type}/>
-        <Table columns={columns()} data={members!} />;
-      </Suspense>
+      <BCrumbs type={type} />
+      <Table columns={columns()} data={members!} />;
     </div>
   );
 }

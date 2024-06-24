@@ -22,7 +22,8 @@ import { ColumnDef } from "@tanstack/react-table";
 import { motion } from "framer-motion";
 import { MoreHorizontal } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import Loading from "@/components/ui/loading";
+
 const columns = (): ColumnDef<{
   id: string | null;
   name: string | null;
@@ -276,17 +277,22 @@ const BCrumbs = () => {
 };
 export default function orgList() {
   const userId = useSearchParams().get("selected");
-  const [organisations, organisationsQuery] =
-    api.users.getOrganisations.useSuspenseQuery({
-      userId: userId!,
-    });
+  const { data: organisations, isLoading } =
+    api.users.getOrganisations.useQuery(
+      {
+        userId: userId!,
+      },
+      { enabled: !!userId },
+    );
+
+  if (isLoading) {
+    return <Loading />;
+  }
 
   return (
-    <Suspense fallback={<div>Loading...</div>}>
-      <div className="flex w-9/12 flex-col gap-2 rounded-lg bg-slate-700 p-4">
-        <BCrumbs />
-        <Table columns={columns()} data={organisations!} />;
-      </div>
-    </Suspense>
+    <div className="flex w-9/12 flex-col gap-2 rounded-lg bg-slate-700 p-4">
+      <BCrumbs />
+      <Table columns={columns()} data={organisations!} />;
+    </div>
   );
 }

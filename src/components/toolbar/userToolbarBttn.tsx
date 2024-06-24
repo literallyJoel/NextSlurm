@@ -3,10 +3,11 @@ import { useState, useRef, useEffect } from "react";
 import { motion, Variants } from "framer-motion";
 import Image from "next/image";
 import DefaultProfile from "@/app/_assets/img/profile/default.jpg";
-import { api } from "@/trpc/react";
-import { signOut, useSession } from "next-auth/react";
-
+import { getSession, signOut } from "next-auth/react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/trpc/react";
+
 const itemVariants: Variants = {
   open: {
     opacity: 1,
@@ -17,7 +18,11 @@ const itemVariants: Variants = {
 };
 
 export default function UserToolbarBttn() {
-  const session = useSession();
+  const { data: session } = useQuery({
+    queryKey: ["session"],
+    queryFn: () => getSession(),
+  });
+
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLUListElement>(null);
   const { data: organisations } = api.users.getOrganisations.useQuery({
@@ -40,7 +45,7 @@ export default function UserToolbarBttn() {
     };
   }, []);
 
-  if (session && session.data) {
+  if (session && session.user) {
     return (
       <motion.nav
         initial={false}
@@ -48,14 +53,15 @@ export default function UserToolbarBttn() {
         className="flex w-2/12 flex-col items-center justify-center gap-2 p-2"
       >
         <motion.button
-          whileTap={{ scale: 0.97 }}
+          whileTap={{ scale: 0.9 }}
+          whileHover={{ scale: 1.1 }}
           onClick={() => setIsOpen(!isOpen)}
         >
           <Image
             height={30}
             width={30}
             className="rounded-full"
-            src={session.data.user.image ?? DefaultProfile}
+            src={session.user.image ?? DefaultProfile}
             alt="profile"
           />
         </motion.button>
@@ -84,7 +90,7 @@ export default function UserToolbarBttn() {
             },
           }}
         >
-          {session.data.user.role === 1 && (
+          {session.user.role === 1 && (
             <Link href="/settings/admin/users">
               <motion.button
                 className="w-full rounded-lg p-1 text-center transition-colors hover:bg-slate-400/20"
@@ -115,5 +121,5 @@ export default function UserToolbarBttn() {
         </motion.ul>
       </motion.nav>
     );
-  } else return <></>;
+  } else return null;
 }

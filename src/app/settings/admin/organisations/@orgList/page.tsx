@@ -14,8 +14,9 @@ import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { api } from "@/trpc/react";
 import { Table } from "@/components/table";
-import { Suspense } from "react";
+
 import { useRouter } from "next/navigation";
+import Loading from "@/components/ui/loading";
 
 const columns = (): ColumnDef<{ id: string; name: string }>[] => {
   const cols: ColumnDef<{ id: string; name: string }>[] = [
@@ -89,14 +90,16 @@ const columns = (): ColumnDef<{ id: string; name: string }>[] => {
 };
 
 export default function OrgList() {
-  const [organisations, organisationsQuery] =
-    api.organisations.get.useSuspenseQuery();
+  const { data: organisations, isLoading } = api.organisations.get.useQuery();
+  if (isLoading) {
+    return <Loading />;
+  }
   return (
-    <Suspense fallback={<div>Loading!!...</div>}>
+
       <div className="flex w-9/12 flex-col gap-2 rounded-lg bg-slate-700 p-4">
         <div className="text-xl font-bold text-white">Organisations</div>
         <Table columns={columns()} data={organisations!} />
       </div>
-    </Suspense>
+
   );
 }

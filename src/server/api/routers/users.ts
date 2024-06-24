@@ -13,7 +13,7 @@ import {
   users,
 } from "@/server/db/schema";
 import { TRPCError } from "@trpc/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 const generatePassword = z
   .function()
   .args(z.number().optional().default(8))
@@ -232,9 +232,10 @@ export const usersRouter = createTRPCRouter({
           role: input.role,
           requiresReset: input.requiresReset,
         })
-        .where(eq(users.id, id)).returning({id: users.id});
+        .where(eq(users.id, id))
+        .returning({ id: users.id });
 
-        return updated[0];
+      return updated[0];
     }),
   get: protectedProcedure
     .input(
@@ -306,7 +307,12 @@ export const usersRouter = createTRPCRouter({
       z
         .object({
           userId: z.string().uuid().optional(),
-          role: z.number().min(0).max(2).optional(),
+          role: z
+            .number()
+            .min(0)
+            .max(2)
+            .optional()
+            .or(z.array(z.number().min(0).max(2))),
         })
         .optional(),
     )
@@ -339,7 +345,10 @@ export const usersRouter = createTRPCRouter({
         .where(
           input?.role
             ? and(
-                eq(organisationMembers.role, input.role),
+                Array.isArray(input.role)
+                  ? inArray(organisationMembers.role, input.role)
+                  : eq(organisationMembers.role, input.role),
+
                 eq(organisationMembers.userId, id),
               )
             : eq(organisationMembers.userId, id),

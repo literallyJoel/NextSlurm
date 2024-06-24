@@ -31,7 +31,9 @@ export default function jobTypeList() {
         </motion.button>
       </div>
 
-      <div className="flex h-full w-full flex-col gap-2 overflow-y-auto"></div>
+      <div className="flex h-full w-full flex-col gap-2 overflow-y-auto">
+        
+      </div>
     </div>
   );
 }

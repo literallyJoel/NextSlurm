@@ -24,7 +24,8 @@ export default function SetupLayout({
   setupProviders: ReactNode;
 }) {
   const router = useRouter();
-  const [requiresSetup] = api.setup.getRequiresSetup.useSuspenseQuery();
+  const {data: requiresSetup} = api.setup.getRequiresSetup.useQuery();
+
   const step = useSearchParams().get("step");
   if (!requiresSetup) {
     router.replace("/");
