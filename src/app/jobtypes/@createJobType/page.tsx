@@ -20,6 +20,30 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { motion } from "framer-motion";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { ChevronsUpDown } from "lucide-react";
+import {
+  PopoverContent,
+  Popover,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 
 export default function CreateJobType() {
   const selected = useSearchParams().get("selected");
@@ -66,15 +90,38 @@ export default function CreateJobType() {
     script: z.string().min(1),
     hasFileUpload: z.boolean().default(false),
     arrayJob: z.boolean().default(false),
+    organisationId: z.string().uuid(),
   });
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
-    defaultValues: {},
+    defaultValues: {
+      organisationId:
+        userMemberships && userMemberships.length === 1
+          ? userMemberships[0]?.id
+          : undefined,
+    },
   });
 
   const onSubmit = (values: z.infer<typeof formSchema>) => {
-    createJobType.mutate(values);
+    const {
+      name,
+      description,
+      script,
+      hasFileUpload,
+      arrayJob,
+      organisationId,
+    } = values;
+
+    createJobType.mutate({
+      name,
+      description,
+      script,
+      hasFileUpload,
+      arrayJob,
+      organisationId,
+      parameters,
+    });
   };
 
   // Watchers for the form fields
@@ -125,6 +172,23 @@ export default function CreateJobType() {
     return _parameters;
   }
 
+  //Updates the parameter type based on the value of the select
+  function updateParamType(
+    name: string,
+    type: "string" | "number" | "boolean",
+  ) {
+    const _parameters = [...parameters];
+    _parameters.find((parameter) => parameter.name === name)!.type = type;
+    setParameters(_parameters);
+  }
+
+  function updateParamDefault(name: string, defaultValue: string) {
+    const _parameters = [...parameters];
+    _parameters.find((parameter) => parameter.name === name)!.defaultValue =
+      defaultValue;
+    setParameters(_parameters);
+  }
+
   useEffect(() => {
     if (arrayJobWatcher && !fileUploadWatcher) {
       form.setValue("hasFileUpload", true);
@@ -132,10 +196,10 @@ export default function CreateJobType() {
   }, [arrayJobWatcher, fileUploadWatcher, form]);
 
   return (
-    <div className="flex h-full w-full flex-col gap-2 rounded-lg bg-slate-700 p-4">
+    <div className="flex h-full w-full flex-col gap-2 overflow-y-auto rounded-lg bg-slate-700 p-4">
       <div className="flex flex-col items-center justify-center gap-2">
         <div className="flex w-full flex-row justify-center text-xl font-semibold text-white">
-          Create a New Job Type
+          {selected ? "Edit Job Type" : "Create a New Job Type"}
         </div>
         <div className="w-1/2 p-2">
           <Form {...form}>
@@ -193,7 +257,7 @@ export default function CreateJobType() {
                               if (arrayJobWatcher) {
                                 form.setValue("hasFileUpload", true);
                               } else {
-                                field.onChange(checked);
+                                field.onChange(checked.valueOf() as boolean);
                               }
                             }}
                             checked={field.value || arrayJobWatcher}
@@ -223,7 +287,10 @@ export default function CreateJobType() {
                             className="h-8 w-8 border-white transition-colors duration-200 hover:bg-slate-700 data-[state=checked]:bg-slate-800"
                             {...field}
                             onCheckedChange={(checked) => {
-                              form.setValue("arrayJob", checked);
+                              form.setValue(
+                                "arrayJob",
+                                checked.valueOf() as boolean,
+                              );
                               if (checked) {
                                 form.setValue("hasFileUpload", true);
                               }
@@ -291,12 +358,162 @@ export default function CreateJobType() {
                   </FormItem>
                 )}
               />
-              <div className="grid grid-cols-4 gap-2">
-                {parameters.map((parameter) => (
-                  <div className="flex w-full flex-row items-center justify-center gap-8 pb-14 text-white">
-                    <FormLabel>{parameter.name}</FormLabel>
+              {parameters && parameters.length > 0 && (
+                <>
+                  <div className="text-lg font-semibold text-white">
+                    Parameters
                   </div>
-                ))}
+
+                  <div className="grid grid-cols-3 gap-2 text-white">
+                    <div className="px-2">Name</div>
+                    <div className="px-2">Type</div>
+                    <div className="px-2">Default Value</div>
+                    {parameters.map((parameter) => (
+                      <>
+                        <div className="px-2">{parameter.name}</div>
+                        <div className="px-2">
+                          <Select
+                            value={parameter.type}
+                            onValueChange={(value) =>
+                              updateParamType(parameter.name, value)
+                            }
+                          >
+                            <SelectTrigger className="text-black">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="string">Text Input</SelectItem>
+                              <SelectItem value="number">
+                                Number Input
+                              </SelectItem>
+                              <SelectItem value="boolean">Checkbox</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="px-2">
+                          {parameter.type === "string" ? (
+                            <Input
+                              className="text-black"
+                              type="text"
+                              value={parameter.defaultValue}
+                              onChange={(e) =>
+                                updateParamDefault(
+                                  parameter.name,
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          ) : parameter.type === "number" ? (
+                            <Input
+                              className="text-black"
+                              type="number"
+                              value={Number.parseInt(
+                                parameter.defaultValue ?? "0",
+                              )}
+                              onChange={(e) =>
+                                updateParamDefault(
+                                  parameter.name,
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          ) : (
+                            <Checkbox
+                              className="h-8 w-8 border-white transition-colors duration-200 hover:bg-slate-700 data-[state=checked]:bg-slate-800"
+                              checked={parameter.defaultValue === "true"}
+                              onCheckedChange={(checked) => {
+                                updateParamDefault(
+                                  parameter.name,
+                                  checked.valueOf().toString(),
+                                );
+                              }}
+                            />
+                          )}
+                        </div>
+                      </>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {userMemberships && userMemberships.length > 1 && (
+                <FormField
+                  control={form.control}
+                  name="organisationId"
+                  render={({ field }) => (
+                    <FormItem className="w-full pt-3">
+                      <div className="flex w-full flex-row items-center justify-between">
+                        <FormLabel className="text-white">Share with</FormLabel>
+                        <FormMessage />
+                      </div>
+                      <Popover>
+                        <PopoverTrigger
+                          className="bg-white hover:bg-white/80"
+                          asChild
+                        >
+                          <FormControl>
+                            <Button
+                              role="combobox"
+                              className={cn(
+                                "w-4/12 justify-between text-black",
+                                !field.value && "text-muted-foreground",
+                              )}
+                            >
+                              {field.value
+                                ? userMemberships.find(
+                                    (org) => org.id === field.value,
+                                  )?.name ?? "Select an organisation"
+                                : "Select an organisation"}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+                        <PopoverContent className="border-none bg-transparent p-0">
+                          <motion.div
+                            initial={{ opacity: 0, y: 0 }}
+                            animate={{ opacity: 1, y: 20 }}
+                            exit={{ opacity: 0, y: 0 }}
+                          >
+                            <Command className="rounded-lg border border-none bg-slate-800 text-white shadow-md ">
+                              <CommandInput placeholder="Search for an organisation..." />
+                              <CommandList>
+                                <CommandEmpty>No results found.</CommandEmpty>
+                                <CommandGroup>
+                                  {userMemberships.map((org) => (
+                                    <CommandItem
+                                      className="bg-slate-800 text-white hover:bg-slate-700"
+                                      onSelect={() => {
+                                        form.setValue(
+                                          "organisationId",
+                                          org.id!,
+                                        );
+                                      }}
+                                      key={org.id}
+                                      value={org.name}
+                                    >
+                                      <span>{org.name}</span>
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </motion.div>
+                        </PopoverContent>
+                      </Popover>
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              <div className="flex flex-row justify-end">
+                <motion.button
+                  className="rounded-lg bg-slate-500 p-2 text-white transition-colors duration-200 hover:bg-fuchsia-700"
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  type="submit"
+                >
+                  Create Job Type
+                </motion.button>
               </div>
             </form>
           </Form>
