@@ -36,7 +36,9 @@
     "**/*.tsx",
     "**/*.cjs",
     "**/*.js",
-    ".next/types/**/*.ts"
-, "src/app/settings/admin/users/@userlist/page.tsx"  ],
+    ".next/types/**/*.ts",
+    "src/app/settings/admin/users/@userlist/page.tsx",
+    "src/app/jobtypes/@createJobType/page.tsx.old"
+  ],
   "exclude": ["node_modules"]
 }

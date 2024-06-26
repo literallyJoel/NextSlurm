@@ -173,7 +173,7 @@ export const jobTypes = createTable("jobType", {
   arrayJob: int("arrayJob", { mode: "boolean" }).notNull(),
 });
 
-export const jobTypesParameters = createTable("jobTypeParameter", {
+export const jobTypeParameters = createTable("jobTypeParameter", {
   id: text("id")
     .notNull()
     .primaryKey()
@@ -190,7 +190,7 @@ export const jobTypesRelations = relations(jobTypes, ({ one, many }) => ({
     fields: [jobTypes.createdBy],
     references: [users.id],
   }),
-  parameters: many(jobTypesParameters),
+  parameters: many(jobTypeParameters),
   sharedJobTypes: many(sharedJobTypes),
 }));
 

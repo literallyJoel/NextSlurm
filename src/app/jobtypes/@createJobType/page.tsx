@@ -1,4 +1,5 @@
 "use client";
+
 import BashEditor from "@/components/ui/bash-editor";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -12,14 +13,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { api } from "@/trpc/react";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
-import { getSession } from "next-auth/react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -28,34 +22,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { motion } from "framer-motion";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { ChevronsUpDown } from "lucide-react";
-import {
-  PopoverContent,
-  Popover,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
+
+import { api } from "@/trpc/react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
+import { getSession } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useFieldArray, useForm } from "react-hook-form";
+import { z } from "zod";
+import Loading from "@/components/ui/loading";
+import { useFocus } from "@/app/hooks/useFocus";
 
 export default function CreateJobType() {
   const selected = useSearchParams().get("selected");
   const router = useRouter();
   const createJobType = api.jobTypes.create.useMutation();
-  const [parameters, setParameters] = useState<
-    {
-      name: string;
-      type: "string" | "number" | "boolean";
-      defaultValue?: string;
-    }[]
-  >([]);
+  const [view, setView] = useState<"create" | "success" | "error">("create");
+
   const { data: session } = useQuery({
     queryKey: ["session"],
     queryFn: () => getSession(),
@@ -67,16 +51,14 @@ export default function CreateJobType() {
         userId: session?.user.id,
         role: [1, 2],
       },
-      {
-        enabled: !!session && !!session.user,
-      },
+      { enabled: !!session && !!session.user },
     );
 
   useEffect(() => {
     if (isFetched && session) {
-      console.log(userMemberships);
       if (
-        (!userMemberships || userMemberships.length === 0) &&
+        !userMemberships ||
+        userMemberships.length === 0 ||
         session.user.role !== 1
       ) {
         router.replace("/");
@@ -87,120 +69,152 @@ export default function CreateJobType() {
   const formSchema = z.object({
     name: z.string().min(1),
     description: z.string().min(1),
-    script: z.string().min(1),
+    script: z
+      .string()
+      .min(1, "A script must be provided")
+      .refine((value) => {
+        if (
+          value.includes("#SBATCH --job-name") ||
+          value.includes("#SBATCH --output") ||
+          value.includes("#SBATCH --array")
+        ) {
+          return false;
+        }
+      }, "Job name, output, and array directives must not be included. These will be added automatically."),
     hasFileUpload: z.boolean().default(false),
     arrayJob: z.boolean().default(false),
     organisationId: z.string().uuid(),
+    parameters: z
+      .array(
+        z.object({
+          name: z.string().min(1),
+          type: z.union([
+            z.literal("string"),
+            z.literal("number"),
+            z.literal("boolean"),
+          ]),
+          defaultValue: z.string().optional(),
+        }),
+      )
+      .optional(),
   });
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       organisationId:
-        userMemberships && userMemberships.length === 1
-          ? userMemberships[0]?.id
+        userMemberships && userMemberships[0] && userMemberships.length === 1
+          ? userMemberships[0].id!
           : undefined,
     },
   });
 
-  const onSubmit = (values: z.infer<typeof formSchema>) => {
-    const {
-      name,
-      description,
-      script,
-      hasFileUpload,
-      arrayJob,
-      organisationId,
-    } = values;
+  const { fields, append, remove, replace } = useFieldArray({
+    control: form.control,
+    name: "parameters",
+  });
 
-    createJobType.mutate({
-      name,
-      description,
-      script,
-      hasFileUpload,
-      arrayJob,
-      organisationId,
-      parameters,
-    });
-  };
+  const scriptEditorRef = useRef<HTMLTextAreaElement>(null);
+  const setFocus = useFocus(scriptEditorRef);
 
-  // Watchers for the form fields
+  function onSubmit(values: z.infer<typeof formSchema>) {
+    console.log("submitting", values);
+  }
+
   const fileUploadWatcher = form.watch("hasFileUpload", false);
   const arrayJobWatcher = form.watch("arrayJob", false);
-  const scriptWatcher = form.watch("script", "");
 
-  useEffect(() => {
-    setParameters(getUpdatedParameters(extractParameters(scriptWatcher)));
-  }, [scriptWatcher]);
+  const extractScriptParameters = z
+    .function()
+    .args(z.string())
+    .returns(z.array(z.string()))
+    .implement((script) => {
+      const pattern = /{{(.*?)}}/g;
+      const matches = script.match(pattern);
+      return matches
+        ? [...new Set(matches.map((match) => match.replace(/{{|}}/g, "")))]
+        : [];
+    });
 
-  //Takes the script and extracts the {{parameters}}
-  function extractParameters(script: string): string[] {
-    const pattern = /{{(.*?)}}/g;
-    const matches = script.match(pattern);
-    return matches
-      ? [...new Set(matches.map((match) => match.replace(/{{|}}/g, "")))]
-      : [];
-  }
+  const getUpdatedParameters = z
+    .function()
+    .args(z.array(z.string()))
+    .returns(
+      z.array(
+        z.object({
+          name: z.string().min(1),
+          type: z.union([
+            z.literal("string"),
+            z.literal("number"),
+            z.literal("boolean"),
+          ]),
+          defaultValue: z.string().optional(),
+        }),
+      ),
+    )
+    .implement((extractedParameters) => {
+      const _parameters = form.getValues("parameters") || [];
+      const parametersSet = new Set(
+        _parameters.map((parameter) => parameter.name),
+      );
 
-  //Takes the extracted parameters and updates the parameters state
-  function getUpdatedParameters(extractedParameters: string[]) {
-    //Createa a copy of the parameters state
-    const _parameters = [...parameters];
-    //Convert to a set of names
-    const parametersSet = new Set(
-      _parameters.map((parameter) => parameter.name),
+      extractedParameters.forEach((name) => {
+        if (!parametersSet.has(name)) {
+          append({
+            name,
+            type: "string", // Default type
+          });
+        }
+      });
+
+      _parameters.forEach((parameter) => {
+        if (!extractedParameters.includes(parameter.name)) {
+          remove(_parameters.indexOf(parameter));
+        }
+      });
+
+      setTimeout(() => {
+        setFocus();
+      }, 1);
+
+      return _parameters;
+    });
+
+  if (createJobType.isPending) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-2 overflow-y-auto rounded-lg bg-slate-700 p-4">
+        <Loading />
+      </div>
     );
-
-    //Add any new parameters
-    extractedParameters.forEach((name) => {
-      if (!parametersSet.has(name)) {
-        _parameters.push({
-          name,
-          type: "string",
-        });
-        parametersSet.add(name);
-      }
-    });
-
-    //Remove any parameters that are no longer present
-    _parameters.forEach((parameter) => {
-      if (!extractedParameters.includes(parameter.name)) {
-        _parameters.splice(_parameters.indexOf(parameter), 1);
-      }
-    });
-
-    return _parameters;
   }
 
-  //Updates the parameter type based on the value of the select
-  function updateParamType(
-    name: string,
-    type: "string" | "number" | "boolean",
-  ) {
-    const _parameters = [...parameters];
-    _parameters.find((parameter) => parameter.name === name)!.type = type;
-    setParameters(_parameters);
+  if (view === "success") {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2">
+        <div className="text-2xl font-semibold text-white">Success!</div>
+        <Button onClick={() => setView("create")}>Create Another</Button>
+      </div>
+    );
   }
 
-  function updateParamDefault(name: string, defaultValue: string) {
-    const _parameters = [...parameters];
-    _parameters.find((parameter) => parameter.name === name)!.defaultValue =
-      defaultValue;
-    setParameters(_parameters);
+  if (view === "error") {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2">
+        <div className="text-2xl font-semibold text-white">
+          Something went wrong.
+        </div>
+        <Button onClick={() => setView("create")}>Back</Button>
+      </div>
+    );
   }
-
-  useEffect(() => {
-    if (arrayJobWatcher && !fileUploadWatcher) {
-      form.setValue("hasFileUpload", true);
-    }
-  }, [arrayJobWatcher, fileUploadWatcher, form]);
 
   return (
     <div className="flex h-full w-full flex-col gap-2 overflow-y-auto rounded-lg bg-slate-700 p-4">
-      <div className="flex flex-col items-center justify-center gap-2">
+      <div className="jusify-center flex flex-col items-center gap-2">
         <div className="flex w-full flex-row justify-center text-xl font-semibold text-white">
           {selected ? "Edit Job Type" : "Create a New Job Type"}
         </div>
+
         <div className="w-1/2 p-2">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
@@ -242,33 +256,33 @@ export default function CreateJobType() {
                   </FormItem>
                 )}
               />
-              <div className="flex w-full flex-row items-center justify-center gap-8 pb-14">
+
+              <div className="flex w-full flex-row items-center justify-between gap-8 pb-14">
                 <FormField
                   control={form.control}
                   name="hasFileUpload"
                   render={({ field }) => (
-                    <FormItem>
+                    <FormItem className="w-1/2">
                       <FormControl>
-                        <div className="group relative flex flex-col items-center justify-center gap-1">
-                          <Checkbox
-                            className="h-8 w-8 border-white transition-colors duration-200 hover:bg-slate-700 data-[state=checked]:bg-slate-800"
-                            {...field}
-                            onCheckedChange={(checked) => {
-                              if (arrayJobWatcher) {
-                                form.setValue("hasFileUpload", true);
-                              } else {
-                                field.onChange(checked.valueOf() as boolean);
-                              }
-                            }}
-                            checked={field.value || arrayJobWatcher}
-                            disabled={arrayJobWatcher}
-                          />
-                          <span className="text-white">
-                            Accepts File Uploads?
-                          </span>
-                          <div className="absolute top-16 flex w-full flex-col items-center justify-center gap-1 rounded-md bg-slate-800 px-4 py-1 text-sm text-white opacity-0 shadow-lg transition-opacity duration-200 group-hover:opacity-100">
-                            Allows the user to upload files when creating the
-                            job.
+                        <div className="flex flex-row items-start gap-3 space-y-0 rounded-lg border-2 border-slate-200 px-4 py-3 shadow-xl">
+                          <motion.span
+                            whileHover={{ scale: 1.1 }}
+                            whileTap={{ scale: 0.9 }}
+                          >
+                            <Checkbox
+                              checked={arrayJobWatcher ? true : field.value}
+                              onCheckedChange={field.onChange}
+                              className="h-6 w-6 border-white transition-colors duration-200 hover:bg-slate-700 data-[state=checked]:bg-slate-800"
+                              disabled={arrayJobWatcher}
+                            />
+                          </motion.span>
+                          <div className="flex flex-col gap-1 leading-none">
+                            <FormLabel className="font-medium leading-none text-white">
+                              File Uploads?
+                            </FormLabel>
+                            <FormDescription className="text-slate-300">
+                              Include a file upload field when creating the job
+                            </FormDescription>
                           </div>
                         </div>
                       </FormControl>
@@ -280,27 +294,26 @@ export default function CreateJobType() {
                   control={form.control}
                   name="arrayJob"
                   render={({ field }) => (
-                    <FormItem>
+                    <FormItem className="w-1/2">
                       <FormControl>
-                        <div className="group relative flex flex-col items-center justify-center gap-1">
-                          <Checkbox
-                            className="h-8 w-8 border-white transition-colors duration-200 hover:bg-slate-700 data-[state=checked]:bg-slate-800"
-                            {...field}
-                            onCheckedChange={(checked) => {
-                              form.setValue(
-                                "arrayJob",
-                                checked.valueOf() as boolean,
-                              );
-                              if (checked) {
-                                form.setValue("hasFileUpload", true);
-                              }
-                            }}
-                            checked={field.value}
-                          />
-                          <span className="text-white">Array Job Support?</span>
-                          <div className="absolute top-16 flex w-full flex-col items-center justify-center gap-1 rounded-md bg-slate-800 px-4 py-1 text-sm text-white opacity-0 shadow-lg transition-opacity duration-200 group-hover:opacity-100">
-                            Marks the job as an array job, allowing the user to
-                            specify different parameters for each run.
+                        <div className="flex flex-row items-start gap-3 space-y-0 rounded-lg border-2 border-slate-200 px-4 py-3 shadow-xl">
+                          <motion.span
+                            whileHover={{ scale: 1.1 }}
+                            whileTap={{ scale: 0.9 }}
+                          >
+                            <Checkbox
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                              className="h-6 w-6 border-white transition-colors duration-200 hover:bg-slate-700 data-[state=checked]:bg-slate-800"
+                            />
+                          </motion.span>
+                          <div className="flex flex-col gap-1 leading-none">
+                            <FormLabel className="font-medium leading-none text-white">
+                              Array Job?
+                            </FormLabel>
+                            <FormDescription className="text-slate-300">
+                              Should this job type be submitted as an array?
+                            </FormDescription>
                           </div>
                         </div>
                       </FormControl>
@@ -308,6 +321,7 @@ export default function CreateJobType() {
                   )}
                 />
               </div>
+
               <FormField
                 control={form.control}
                 name="script"
@@ -317,17 +331,19 @@ export default function CreateJobType() {
                       <FormLabel className="text-white">Script</FormLabel>
                       <FormMessage />
                     </div>
+
                     <FormDescription className="text-slate-300">
                       Any runtime parameters should be written as{" "}
                       <span className="text-fuchsia-400">
-                        {"{{parameter}}"}
+                        {"{{parameter}}"}{" "}
                       </span>
-                      .<br />{" "}
+                      .
+                      <br />{" "}
                       <span className="font-semibold text-red-400">
-                        Do not include the Slurm Directives at the top of the
-                        script.
+                        Do not include the Job Name, Output, or Array Slurm
+                        Directives.
                       </span>{" "}
-                      these will be added automatically.
+                      These will be added automatically.
                       {fileUploadWatcher && !arrayJobWatcher && (
                         <>
                           <br />
@@ -352,160 +368,115 @@ export default function CreateJobType() {
                         </>
                       )}
                     </FormDescription>
-                    <FormControl>
-                      <BashEditor onChange={field.onChange} />
-                    </FormControl>
+                    <BashEditor
+                      editorRef={scriptEditorRef}
+                      onChange={(e) => {
+                        field.onChange(e);
+                        const scriptParams = extractScriptParameters(
+                          e.target.value,
+                        );
+                        getUpdatedParameters(scriptParams);
+                      }}
+                    />
                   </FormItem>
                 )}
               />
-              {parameters && parameters.length > 0 && (
-                <>
-                  <div className="text-lg font-semibold text-white">
-                    Parameters
-                  </div>
 
-                  <div className="grid grid-cols-3 gap-2 text-white">
-                    <div className="px-2">Name</div>
-                    <div className="px-2">Type</div>
-                    <div className="px-2">Default Value</div>
-                    {parameters.map((parameter) => (
-                      <>
-                        <div className="px-2">{parameter.name}</div>
-                        <div className="px-2">
-                          <Select
-                            value={parameter.type}
-                            onValueChange={(value) =>
-                              updateParamType(parameter.name, value)
-                            }
-                          >
-                            <SelectTrigger className="text-black">
-                              <SelectValue />
+              {fields.map((item, index) => (
+                <div
+                  key={item.id}
+                  className="grid w-full grid-cols-3 gap-2 rounded-lg border-2 border-slate-200  p-2 shadow-xl"
+                >
+                  <FormField
+                    control={form.control}
+                    name={`parameters.${index}.name`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-white">Parameter</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="text"
+                            placeholder="Parameter name"
+                            value={field.value}
+                            className=" border-none bg-slate-700 p-0 font-bold disabled:cursor-default disabled:text-white disabled:opacity-100"
+                            disabled
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name={`parameters.${index}.type`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-white">Type</FormLabel>
+                        <Select
+                          onValueChange={(value) => {
+                            field.onChange(value);
+                            form.setValue(
+                              `parameters.${index}.defaultValue`,
+                              "",
+                            );
+                          }}
+                          defaultValue={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select a type" />
                             </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="string">Text Input</SelectItem>
-                              <SelectItem value="number">
-                                Number Input
-                              </SelectItem>
-                              <SelectItem value="boolean">Checkbox</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="px-2">
-                          {parameter.type === "string" ? (
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="string">String</SelectItem>
+                            <SelectItem value="number">Number</SelectItem>
+                            <SelectItem value="boolean">Boolean</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name={`parameters.${index}.defaultValue`}
+                    render={({ field }) => (
+                      <FormItem className="flex flex-col items-center justify-center gap-2">
+                        <FormLabel className="text-white">
+                          Default Value
+                        </FormLabel>
+                        <FormControl>
+                          {form.watch(`parameters.${index}.type`) ===
+                          "string" ? (
                             <Input
-                              className="text-black"
                               type="text"
-                              value={parameter.defaultValue}
-                              onChange={(e) =>
-                                updateParamDefault(
-                                  parameter.name,
-                                  e.target.value,
-                                )
-                              }
+                              placeholder="Default value"
+                              {...field}
                             />
-                          ) : parameter.type === "number" ? (
+                          ) : form.watch(`parameters.${index}.type`) ===
+                            "number" ? (
                             <Input
-                              className="text-black"
                               type="number"
-                              value={Number.parseInt(
-                                parameter.defaultValue ?? "0",
-                              )}
-                              onChange={(e) =>
-                                updateParamDefault(
-                                  parameter.name,
-                                  e.target.value,
-                                )
-                              }
+                              placeholder="Default value"
+                              {...field}
                             />
                           ) : (
                             <Checkbox
                               className="h-8 w-8 border-white transition-colors duration-200 hover:bg-slate-700 data-[state=checked]:bg-slate-800"
-                              checked={parameter.defaultValue === "true"}
-                              onCheckedChange={(checked) => {
-                                updateParamDefault(
-                                  parameter.name,
-                                  checked.valueOf().toString(),
-                                );
-                              }}
+                              checked={field.value === "true"}
+                              onCheckedChange={(checked) =>
+                                field.onChange(checked ? "true" : "false")
+                              }
                             />
                           )}
-                        </div>
-                      </>
-                    ))}
-                  </div>
-                </>
-              )}
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              ))}
 
-              {userMemberships && userMemberships.length > 1 && (
-                <FormField
-                  control={form.control}
-                  name="organisationId"
-                  render={({ field }) => (
-                    <FormItem className="w-full pt-3">
-                      <div className="flex w-full flex-row items-center justify-between">
-                        <FormLabel className="text-white">Share with</FormLabel>
-                        <FormMessage />
-                      </div>
-                      <Popover>
-                        <PopoverTrigger
-                          className="bg-white hover:bg-white/80"
-                          asChild
-                        >
-                          <FormControl>
-                            <Button
-                              role="combobox"
-                              className={cn(
-                                "w-4/12 justify-between text-black",
-                                !field.value && "text-muted-foreground",
-                              )}
-                            >
-                              {field.value
-                                ? userMemberships.find(
-                                    (org) => org.id === field.value,
-                                  )?.name ?? "Select an organisation"
-                                : "Select an organisation"}
-                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="border-none bg-transparent p-0">
-                          <motion.div
-                            initial={{ opacity: 0, y: 0 }}
-                            animate={{ opacity: 1, y: 20 }}
-                            exit={{ opacity: 0, y: 0 }}
-                          >
-                            <Command className="rounded-lg border border-none bg-slate-800 text-white shadow-md ">
-                              <CommandInput placeholder="Search for an organisation..." />
-                              <CommandList>
-                                <CommandEmpty>No results found.</CommandEmpty>
-                                <CommandGroup>
-                                  {userMemberships.map((org) => (
-                                    <CommandItem
-                                      className="bg-slate-800 text-white hover:bg-slate-700"
-                                      onSelect={() => {
-                                        form.setValue(
-                                          "organisationId",
-                                          org.id!,
-                                        );
-                                      }}
-                                      key={org.id}
-                                      value={org.name}
-                                    >
-                                      <span>{org.name}</span>
-                                    </CommandItem>
-                                  ))}
-                                </CommandGroup>
-                              </CommandList>
-                            </Command>
-                          </motion.div>
-                        </PopoverContent>
-                      </Popover>
-                    </FormItem>
-                  )}
-                />
-              )}
-
-              <div className="flex flex-row justify-end">
+              <div className="flex flex-row justify-end gap-2">
                 <motion.button
                   className="rounded-lg bg-slate-500 p-2 text-white transition-colors duration-200 hover:bg-fuchsia-700"
                   whileHover={{ scale: 1.1 }}
