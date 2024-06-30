@@ -231,3 +231,102 @@ export const sharedJobTypeRelations = relations(sharedJobTypes, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+export const jobs = createTable("job", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => v4()),
+  name: text("name").notNull(),
+  startTime: int("startTime", { mode: "timestamp" })
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+  endTime: int("endTime", { mode: "timestamp" }),
+  //0 is running, 1 is completed, 2 is failed.
+  status: int("status", { mode: "number" }).notNull().default(0),
+  createdBy: text("createdBy")
+    .references(() => users.id)
+    .notNull(),
+  jobTypeId: text("jobTypeId")
+    .references(() => jobTypes.id)
+    .notNull(),
+  //Every job requries a slurmId, but we need to create the record before we can set it.
+  slurmId: text("slurmId"),
+  fileId: text("fileId"),
+});
+
+export const jobParameters = createTable(
+  "jobParameter",
+  {
+    jobId: text("jobId")
+      .references(() => jobs.id)
+      .notNull(),
+    key: text("key").notNull(),
+    value: text("value").notNull(),
+  },
+  (tbl) => ({
+    pk: primaryKey({ columns: [tbl.jobId, tbl.key] }),
+  }),
+);
+
+export const jobsRelations = relations(jobs, ({ one, many }) => ({
+  createdBy: one(users, {
+    fields: [jobs.createdBy],
+    references: [users.id],
+  }),
+  jobType: one(jobTypes, {
+    fields: [jobs.jobTypeId],
+    references: [jobTypes.id],
+  }),
+  parameters: many(jobParameters),
+}));
+
+export const jobParameterRelations = relations(jobParameters, ({ one }) => ({
+  job: one(jobs, {
+    fields: [jobParameters.jobId],
+    references: [jobs.id],
+  }),
+}));
+
+export const sharedJobs = createTable("sharedJob", {
+  id: text("id")
+    .notNull()
+    .primaryKey()
+    .$defaultFn(() => v4()),
+  jobId: text("jobId")
+    .references(() => jobs.id)
+    .notNull(),
+  organisationId: text("organisationId").references(() => organisations.id),
+  userId: text("userId").references(() => users.id),
+});
+
+export const sharedJobRelations = relations(sharedJobs, ({ one }) => ({
+  job: one(jobs, {
+    fields: [sharedJobs.jobId],
+    references: [jobs.id],
+  }),
+  organisation: one(organisations, {
+    fields: [sharedJobs.organisationId],
+    references: [organisations.id],
+  }),
+  user: one(users, {
+    fields: [sharedJobs.userId],
+    references: [users.id],
+  }),
+}));
+
+export const files = createTable("file", {
+  id: text("id")
+    .notNull()
+    .primaryKey()
+    .$defaultFn(() => v4()),
+  userId: text("userId")
+    .references(() => users.id)
+    .notNull(),
+});
+
+export const fileRelations = relations(files, ({ one }) => ({
+  user: one(users, {
+    fields: [files.userId],
+    references: [users.id],
+  }),
+}));
