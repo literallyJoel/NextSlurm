@@ -1,13 +1,8 @@
 import "@/styles/globals.css";
 
-import { GeistSans } from "geist/font/sans";
-
-import { TRPCReactProvider } from "@/trpc/react";
-import { SessionProvider } from "next-auth/react";
 import Root from "./_rootLayout";
-import { api } from "@/trpc/server";
-import { redirect } from "next/navigation";
 import { getServerAuthSession } from "@/server/auth";
+import { api } from "@/trpc/server";
 
 export const metadata = {
   title: "Create T3 App",
@@ -20,26 +15,9 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const requiresSetup = await api.setup.getRequiresSetup();
   const session = await getServerAuthSession();
-
-  if (
-    !requiresSetup &&
-    !session &&
-    typeof window !== "undefined" &&
-    window.location.pathname !== "/api/auth/signin" &&
-    window.location.pathname !== "/auth/login"
-  ) {
-    redirect("/api/auth/signin");
-  }
-
-  if (
-    requiresSetup &&
-    typeof window !== "undefined" &&
-    !window.location.pathname.includes("/setup")
-  ) {
-    redirect("/setup");
-  }
-
-  return <Root children={children} />;
+  const requiresSetup = await api.setup.getRequiresSetup();
+  return (
+    <Root children={children} session={session} requiresSetup={requiresSetup} />
+  );
 }

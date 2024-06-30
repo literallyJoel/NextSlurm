@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { createTRPCRouter, protectedProcedure } from "../trpc";
+import {
+  createTRPCRouter,
+  globalAdminProcedure,
+  protectedProcedure,
+} from "../trpc";
 import { TRPCError } from "@trpc/server";
 import {
   jobTypeParameters,
@@ -12,137 +16,163 @@ export const jobTypesRouter = createTRPCRouter({
   get: protectedProcedure
     .input(
       z.union([
-        z
-          .object({ id: z.string().uuid(), createdBy: z.undefined() })
-          .optional(),
-        z
-          .object({ id: z.undefined(), createdBy: z.string().uuid() })
-          .optional(),
+        z.object({ id: z.string().uuid(), createdBy: z.undefined() }),
+        z.object({ id: z.undefined(), createdBy: z.string().uuid() }),
       ]),
     )
     .output(
-      z
-        .object({
+      z.object({
+        id: z.string().uuid(),
+        name: z.string(),
+        description: z.string(),
+        script: z.string(),
+        hasFileUpload: z.boolean(),
+        arrayJob: z.boolean(),
+        createdBy: z.object({ id: z.string().uuid(), name: z.string() }),
+        parameters: z.array(
+          z.object({
+            name: z.string(),
+            type: z.string(),
+            defaultValue: z.string().nullable(),
+          }),
+        ),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      let jobType;
+      if (input.id) {
+        jobType = await ctx.db.query.jobTypes.findFirst({
+          where: (jobTypes, { eq }) => eq(jobTypes.id, input.id),
+          with: {
+            parameters: true,
+            createdBy: {
+              columns: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        });
+      } else {
+        jobType = await ctx.db.query.jobTypes.findFirst({
+          where: (jobTypes, { eq }) => eq(jobTypes.createdBy, input.createdBy!),
+          with: {
+            parameters: true,
+            createdBy: {
+              columns: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        });
+      }
+
+      if (!jobType) {
+        throw new TRPCError({ code: "BAD_REQUEST" });
+      }
+
+      //Ensure the user either created or has access to the job type
+      if (
+        jobType.createdBy.id !== ctx.session.user.id &&
+        ctx.session.user.role !== 1
+      ) {
+        //Grab a list of the organisations the user is a member of
+        const requestorOrgs = await ctx.db.query.organisationMembers.findMany({
+          where: (organisationMembers, { eq }) =>
+            eq(organisationMembers.userId, ctx.session.user.id),
+        });
+
+        //Find the first instance of the job being shared with either the user or their orgs
+        const _jt = await ctx.db.query.sharedJobTypes.findFirst({
+          where: (sharedJobTypes, { eq, and, or, inArray }) =>
+            and(
+              eq(sharedJobTypes.jobTypeId, jobType.id),
+              or(
+                inArray(
+                  sharedJobTypes.organisationId,
+                  requestorOrgs.map((org) => org.organisationId),
+                ),
+                eq(sharedJobTypes.userId, ctx.session.user.id),
+              ),
+            ),
+        });
+
+        //If there are no instances, we return unauthorized
+        if (!_jt) throw new TRPCError({ code: "UNAUTHORIZED" });
+      }
+
+      return jobType;
+    }),
+  getAll: protectedProcedure
+    .output(
+      z.array(
+        z.object({
           id: z.string().uuid(),
           name: z.string(),
           description: z.string(),
           script: z.string(),
           hasFileUpload: z.boolean(),
           arrayJob: z.boolean(),
-          createdBy: z.string().uuid(),
-        })
-        .or(
-          z.array(
+          createdBy: z.object({ id: z.string().uuid(), name: z.string() }),
+          parameters: z.array(
             z.object({
-              id: z.string().uuid(),
               name: z.string(),
-              description: z.string(),
-              script: z.string(),
-              hasFileUpload: z.boolean(),
-              arrayJob: z.boolean(),
-              createdBy: z.string().uuid(),
+              type: z.string(),
+              defaultValue: z.string().nullable(),
             }),
           ),
-        )
-        .or(z.undefined()),
+        }),
+      ),
     )
-    .query(async ({ ctx, input }) => {
-      //If there is no input, we ensure global admin and return all
-      if (!input) {
-        if (ctx.session.user.role !== 1) {
-          throw new TRPCError({ code: "UNAUTHORIZED" });
-        }
-
-        return await ctx.db.query.jobTypes.findMany({
-          with: { parameters: true },
-        });
-      }
-
-      //If they provide an ID,we grab the job type with that ID
-      if (input.id) {
-        //Grab the job type
-        const jobType = await ctx.db.query.jobTypes.findFirst({
-          where: (jobTypes, { eq }) => eq(jobTypes.id, input.id),
-          with: { parameters: true },
-        });
-
-        if (!jobType) {
-          throw new TRPCError({ code: "BAD_REQUEST" });
-        }
-
-        //Ensure the user either created or has access to the job type
-        if (jobType.createdBy !== ctx.session.user.id) {
-          //Grab a list of the organisations the user is a member of
-          const requestorOrgs = await ctx.db.query.organisationMembers.findMany(
-            {
-              where: (organisationMembers, { eq }) =>
-                eq(organisationMembers.userId, ctx.session.user.id),
+    .query(async ({ ctx }) => {
+      //Grab all job types
+      const jobTypes = await ctx.db.query.jobTypes.findMany({
+        with: {
+          parameters: true,
+          createdBy: {
+            columns: {
+              id: true,
+              name: true,
             },
-          );
+          },
+        },
+      });
 
-          //Find the first instance of the job being shared with either the user or their orgs
-          const _jt = await ctx.db.query.sharedJobTypes.findFirst({
-            where: (sharedJobTypes, { eq, and, or, inArray }) =>
-              and(
-                eq(sharedJobTypes.jobTypeId, jobType.id),
-                or(
-                  inArray(
-                    sharedJobTypes.organisationId,
-                    requestorOrgs.map((org) => org.organisationId),
-                  ),
-                  eq(sharedJobTypes.userId, ctx.session.user.id),
-                ),
+      //If they're not a global admin, filter the list to only include job types the user has access to
+      if (ctx.session.user.role !== 1) {
+        //Grab a list of the organisations the user is a member of
+        const requestorOrgs = await ctx.db.query.organisationMembers.findMany({
+          where: (organisationMembers, { eq }) =>
+            eq(organisationMembers.userId, ctx.session.user.id),
+        });
+
+        //Filter the list to only include job types the user has access to
+        const _jt = await ctx.db.query.sharedJobTypes.findMany({
+          where: (sharedJobTypes, { eq, and, or, inArray }) =>
+            and(
+              inArray(
+                sharedJobTypes.jobTypeId,
+                jobTypes.map((jt) => jt.id),
               ),
-          });
-
-          //If there are no instances, we return unauthorized
-          if (!_jt) throw new TRPCError({ code: "UNAUTHORIZED" });
-
-          return jobType;
-        }
-      }
-
-      //If they provide a createdBy, we grab the jobTypes created by that user
-      if (input.createdBy) {
-        //Grab the job types
-        const jobTypes = await ctx.db.query.jobTypes.findMany({
-          where: (jobTypes, { eq }) => eq(jobTypes.createdBy, input.createdBy),
-          with: { parameters: true },
-        });
-
-        if (input.createdBy !== ctx.session.user.id) {
-          //Filter the list to only include job types the user has access to
-          //Grab a list of the organisations the user is a member of
-          const requestorOrgs = await ctx.db.query.organisationMembers.findMany(
-            {
-              where: (organisationMembers, { eq }) =>
-                eq(organisationMembers.userId, ctx.session.user.id),
-            },
-          );
-          const _jt = await ctx.db.query.sharedJobTypes.findMany({
-            where: (sharedJobTypes, { eq, and, or, inArray }) =>
-              and(
+              or(
                 inArray(
-                  sharedJobTypes.jobTypeId,
-                  jobTypes.map((jt) => jt.id),
+                  sharedJobTypes.organisationId,
+                  requestorOrgs.map((org) => org.organisationId),
                 ),
-                or(
-                  inArray(
-                    sharedJobTypes.organisationId,
-                    requestorOrgs.map((org) => org.organisationId),
-                  ),
-                  eq(sharedJobTypes.userId, ctx.session.user.id),
-                ),
+                eq(sharedJobTypes.userId, ctx.session.user.id),
               ),
-          });
+            ),
+        });
 
-          const filteredTypes = jobTypes.filter((type) => {
-            return _jt.some((_jt) => _jt.jobTypeId === type.id);
-          });
-
-          return filteredTypes;
-        }
+        const filteredTypes = jobTypes.filter((type) => {
+          return _jt.some((_jt) => _jt.jobTypeId === type.id);
+        });
+        return filteredTypes;
       }
+
+      //If they are a global admin, we return all.
+      return jobTypes;
     }),
   update: protectedProcedure
     .input(

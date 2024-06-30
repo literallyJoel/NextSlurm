@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 
 import { api } from "@/trpc/react";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -33,17 +33,28 @@ import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
 import Loading from "@/components/ui/loading";
 import { useFocus } from "@/app/hooks/useFocus";
+import { XCircleIcon } from "@heroicons/react/24/outline";
+import { CheckCircleIcon } from "lucide-react";
 
 export default function CreateJobType() {
   const selected = useSearchParams().get("selected");
   const router = useRouter();
   const createJobType = api.jobTypes.create.useMutation();
+  const updateJobType = api.jobTypes.update.useMutation();
   const [view, setView] = useState<"create" | "success" | "error">("create");
-
+  const utils = api.useUtils();
   const { data: session } = useQuery({
     queryKey: ["session"],
     queryFn: () => getSession(),
   });
+
+  const { data: selectedJobType, isLoading: loadingSelected } =
+    api.jobTypes.get.useQuery(
+      {
+        id: selected!,
+      },
+      { enabled: !!selected },
+    );
 
   const { data: userMemberships, isFetched } =
     api.users.getOrganisations.useQuery(
@@ -62,9 +73,30 @@ export default function CreateJobType() {
         session.user.role !== 1
       ) {
         router.replace("/");
+      } else if (userMemberships.length === 1) {
+        form.setValue("organisationId", userMemberships[0]!.id!);
       }
     }
   }, [isFetched, session, userMemberships]);
+
+  useEffect(() => {
+    if (selected && selectedJobType && !Array.isArray(selectedJobType)) {
+      form.setValue("name", selectedJobType.name);
+      form.setValue("description", selectedJobType.description);
+      form.setValue("script", selectedJobType.script);
+      form.setValue("hasFileUpload", selectedJobType.hasFileUpload);
+      form.setValue("arrayJob", selectedJobType.arrayJob);
+      //Because this is retrieved on a database join, it can be null, so we need to map it onto undefined
+      const _params = selectedJobType.parameters.map((param) => ({
+        ...param,
+        type: param.type as "string" | "number" | "boolean",
+        defaultValue: param.defaultValue ?? undefined,
+      }));
+      form.setValue("parameters", _params);
+    } else {
+      form.reset();
+    }
+  }, [selected, selectedJobType]);
 
   const formSchema = z.object({
     name: z.string().min(1),
@@ -80,6 +112,7 @@ export default function CreateJobType() {
         ) {
           return false;
         }
+        return true;
       }, "Job name, output, and array directives must not be included. These will be added automatically."),
     hasFileUpload: z.boolean().default(false),
     arrayJob: z.boolean().default(false),
@@ -102,14 +135,15 @@ export default function CreateJobType() {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      organisationId:
-        userMemberships && userMemberships[0] && userMemberships.length === 1
-          ? userMemberships[0].id!
-          : undefined,
+      name: selectedJobType?.name ?? "",
+      description: "",
+      hasFileUpload: false,
+      arrayJob: false,
+      parameters: undefined,
     },
   });
 
-  const { fields, append, remove, replace } = useFieldArray({
+  const { fields, append, remove } = useFieldArray({
     control: form.control,
     name: "parameters",
   });
@@ -118,7 +152,26 @@ export default function CreateJobType() {
   const setFocus = useFocus(scriptEditorRef);
 
   function onSubmit(values: z.infer<typeof formSchema>) {
-    console.log("submitting", values);
+    if (!selected) {
+      createJobType.mutate(values, {
+        onSuccess: () => {
+          utils.jobTypes.invalidate();
+          setView("success");
+        },
+        onError: () => setView("error"),
+      });
+    } else {
+      updateJobType.mutate(
+        { ...values, id: selected },
+        {
+          onSuccess: () => {
+            utils.jobTypes.invalidate();
+            setView("success");
+          },
+          onError: () => setView("error"),
+        },
+      );
+    }
   }
 
   const fileUploadWatcher = form.watch("hasFileUpload", false);
@@ -180,9 +233,9 @@ export default function CreateJobType() {
       return _parameters;
     });
 
-  if (createJobType.isPending) {
+  if (createJobType.isPending || (selected && loadingSelected)) {
     return (
-      <div className="flex h-full w-full flex-col items-center justify-center gap-2 overflow-y-auto rounded-lg bg-slate-700 p-4">
+      <div className="flex w-full flex-col items-center justify-center gap-2 rounded-lg bg-slate-700">
         <Loading />
       </div>
     );
@@ -190,19 +243,50 @@ export default function CreateJobType() {
 
   if (view === "success") {
     return (
-      <div className="flex flex-col items-center justify-center gap-2">
-        <div className="text-2xl font-semibold text-white">Success!</div>
-        <Button onClick={() => setView("create")}>Create Another</Button>
+      <div className="flex w-full flex-col items-center justify-center gap-2 rounded-lg bg-slate-700">
+        <AnimatePresence>
+          <motion.span
+            initial={{ scale: 0, opacity: 0, rotate: 360 }}
+            animate={{ scale: 1, opacity: 1, rotate: 0 }}
+            transition={{ duration: 0.4 }}
+          >
+            <CheckCircleIcon className="h-16 w-16 text-green-400" />
+          </motion.span>
+        </AnimatePresence>
+
+        <div className="text-2xl font-semibold text-white">
+          Successfully {selected ? "updated" : "created"} Job Type!
+        </div>
+        <Button
+          onClick={() => {
+            if (!selected) {
+              form.reset();
+            }
+            setView("create");
+          }}
+        >
+          {selected ? "Back" : "Create Another"}
+        </Button>
       </div>
     );
   }
 
   if (view === "error") {
     return (
-      <div className="flex flex-col items-center justify-center gap-2">
-        <div className="text-2xl font-semibold text-white">
-          Something went wrong.
+      <div className="flex w-full flex-col items-center justify-center gap-2 rounded-lg bg-slate-700">
+        <AnimatePresence>
+          <motion.span
+            initial={{ scale: 0, opacity: 0, rotate: 360 }}
+            animate={{ scale: 1, opacity: 1, rotate: 0 }}
+            transition={{ duration: 0.4 }}
+          >
+            <XCircleIcon className="h-16 w-16 text-red-400" />
+          </motion.span>
+        </AnimatePresence>
+        <div className="pb-2 text-2xl font-semibold text-white">
+          There was an issue {selected ? "updating" : "creating"} your Job Type.
         </div>
+
         <Button onClick={() => setView("create")}>Back</Button>
       </div>
     );
@@ -257,7 +341,7 @@ export default function CreateJobType() {
                 )}
               />
 
-              <div className="flex w-full flex-row items-center justify-between gap-8 pb-14">
+              <div className="flex w-full flex-row items-center justify-between gap-8 ">
                 <FormField
                   control={form.control}
                   name="hasFileUpload"
@@ -312,7 +396,8 @@ export default function CreateJobType() {
                               Array Job?
                             </FormLabel>
                             <FormDescription className="text-slate-300">
-                              Should this job type be submitted as an array?
+                              Run this job multiple times with different user
+                              inputs?
                             </FormDescription>
                           </div>
                         </div>
@@ -370,6 +455,7 @@ export default function CreateJobType() {
                     </FormDescription>
                     <BashEditor
                       editorRef={scriptEditorRef}
+                      value={field.value}
                       onChange={(e) => {
                         field.onChange(e);
                         const scriptParams = extractScriptParameters(
@@ -451,6 +537,7 @@ export default function CreateJobType() {
                             <Input
                               type="text"
                               placeholder="Default value"
+                              defaultValue=""
                               {...field}
                             />
                           ) : form.watch(`parameters.${index}.type`) ===
@@ -458,12 +545,14 @@ export default function CreateJobType() {
                             <Input
                               type="number"
                               placeholder="Default value"
+                              defaultValue={0}
                               {...field}
                             />
                           ) : (
                             <Checkbox
                               className="h-8 w-8 border-white transition-colors duration-200 hover:bg-slate-700 data-[state=checked]:bg-slate-800"
                               checked={field.value === "true"}
+                              defaultChecked={false}
                               onCheckedChange={(checked) =>
                                 field.onChange(checked ? "true" : "false")
                               }
@@ -483,7 +572,7 @@ export default function CreateJobType() {
                   whileTap={{ scale: 0.9 }}
                   type="submit"
                 >
-                  Create Job Type
+                  {selected ? "Update Job Type" : "Create Job Type"}
                 </motion.button>
               </div>
             </form>

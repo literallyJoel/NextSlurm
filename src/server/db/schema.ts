@@ -185,6 +185,29 @@ export const jobTypeParameters = createTable("jobTypeParameter", {
   defaultValue: text("defaultValue"),
   type: text("type").notNull(),
 });
+
+export const jobTypeParameterRelations = relations(
+  jobTypeParameters,
+  ({ one }) => ({
+    jobTypeId: one(jobTypes, {
+      fields: [jobTypeParameters.jobTypeId],
+      references: [jobTypes.id],
+    }),
+  }),
+);
+
+export const sharedJobTypes = createTable("sharedJobType", {
+  id: text("id")
+    .notNull()
+    .primaryKey()
+    .$defaultFn(() => v4()),
+  jobTypeId: text("jobTypeId")
+    .references(() => jobTypes.id)
+    .notNull(),
+  organisationId: text("organisationId").references(() => organisations.id),
+  userId: text("userId").references(() => users.id),
+});
+
 export const jobTypesRelations = relations(jobTypes, ({ one, many }) => ({
   createdBy: one(users, {
     fields: [jobTypes.createdBy],
@@ -194,10 +217,17 @@ export const jobTypesRelations = relations(jobTypes, ({ one, many }) => ({
   sharedJobTypes: many(sharedJobTypes),
 }));
 
-export const sharedJobTypes = createTable("sharedJobType", {
-  id: text("id").notNull().primaryKey().$defaultFn(() => v4()),
-  jobTypeId: text("jobTypeId").references(() => jobTypes.id).notNull(),
-  organisationId: text("organisationId").references(() => organisations.id),
-  userId: text("userId").references(() => users.id),
-});
-
+export const sharedJobTypeRelations = relations(sharedJobTypes, ({ one }) => ({
+  jobType: one(jobTypes, {
+    fields: [sharedJobTypes.jobTypeId],
+    references: [jobTypes.id],
+  }),
+  organisation: one(organisations, {
+    fields: [sharedJobTypes.organisationId],
+    references: [organisations.id],
+  }),
+  user: one(users, {
+    fields: [sharedJobTypes.userId],
+    references: [users.id],
+  }),
+}));
