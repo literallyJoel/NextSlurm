@@ -35,13 +35,15 @@ export const jobsRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const { name, jobTypeId, fileId, parameters } = input;
+
       //If a fileId is provided, we ensure that it is a valid file ID that belongs to the user
       if (!!fileId) {
         const file = await ctx.db.query.files.findFirst({
-          where: (files, { eq }) => eq(files.id, input.fileId!),
+          where: (files, { eq, and }) =>
+            and(eq(files.id, fileId), eq(files.userId, ctx.session.user.id)),
         });
 
-        if (!file || file.userId !== ctx.session.user.id) {
+        if (!file) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "Invalid FileId provided",
@@ -49,7 +51,7 @@ export const jobsRouter = createTRPCRouter({
         }
       }
 
-      //Check if the user has access to the job type
+      //Ensure the user has access to the selected job type
       const jobType = await ctx.db.query.jobTypes.findFirst({
         where: (jobTypes, { eq }) => eq(jobTypes.id, input.jobTypeId),
       });
@@ -93,134 +95,141 @@ export const jobsRouter = createTRPCRouter({
 
       //Start a transaction
       return await ctx.db.transaction(async (tx) => {
-        //======================================================================//
-        //========================Database Record Creation======================//
-        //======================================================================//
-        //Create the database record
-        const newJob = await tx
-          .insert(jobs)
-          .values({
-            name,
-            jobTypeId,
-            fileId,
-            createdBy: ctx.session.user.id,
-          })
-          .returning({ id: jobs.id });
+        //Create the initial database record
+        const job = (
+          await tx
+            .insert(jobs)
+            .values({
+              name,
+              jobTypeId,
+              fileId,
+              createdBy: ctx.session.user.id,
+            })
+            .returning({
+              id: jobs.id,
+              name: jobs.createdBy,
+              jobTypeId: jobs.jobTypeId,
+              fileId: jobs.fileId,
+              createdBy: jobs.createdBy,
+            })
+        )[0];
 
-        const newJobId = newJob[0]?.id;
         //Rollback if any issues
-        if (!newJobId) {
+        if (!job) {
           tx.rollback();
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-        }
-
-        //======================================================================//
-        //==========================Parameter Setup=============================//
-        //======================================================================//
-        //Add the parameters
-        if (parameters) {
-          try {
-            await tx.insert(jobParameters).values(
-              parameters.map((param) => ({
-                ...param,
-                jobId: newJobId,
-              })),
-            );
-          } catch (e) {
-            //Rollback if any issues
-            tx.rollback();
-            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", cause: e });
-          }
-        }
-
-        try {
-          //======================================================================//
-          //=============================File Setup===============================//
-          //======================================================================//
-          //Ensure all the required directories exist
-          fs.mkdirSync(
-            path.join(env.USER_DIR, ctx.session.user.id, "input", newJobId),
-            { recursive: true },
-          );
-          fs.mkdirSync(
-            path.join(env.USER_DIR, ctx.session.user.id, "output", newJobId),
-            { recursive: true },
-          );
-          fs.mkdirSync(
-            path.join(env.USER_DIR, ctx.session.user.id, "script", newJobId),
-            { recursive: true },
-          );
-
-          //Move the files into the correct folder if a fileId is provided
-          if (fileId) {
-            const inputDir = path.join(
-              env.USER_DIR,
-              ctx.session.user.id,
-              "input",
-              newJobId,
-            );
-            const filePath = path.join(env.USER_DIR, "unclaimed");
-            //Grab a list of all files in the unclaimed directory and move any files that start with the fileId to the input directory
-            const files = fs.readdirSync(filePath);
-            files.forEach((file) => {
-              if (file.startsWith(fileId)) {
-                fs.renameSync(
-                  path.join(filePath, file),
-                  path.join(inputDir, file),
-                );
-              }
-            });
-          }
-        } catch (e) {
-          tx.rollback();
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", cause: e });
-        }
-
-        //======================================================================//
-        //==========================Script Generation===========================//
-        //======================================================================//
-
-        //Grab the original script template
-        const jobTypeScript = jobType.script;
-        //Swap out /r/n with /n
-        let script = jobTypeScript.replace("\r\n", "\n");
-
-        //Add in the Slurm Directives
-        //Job Name Directive                                    //Job Output Directive                                                             //If array job we append the array index to the filename
-        script = `#!/bin/bash\n#SBATCH --job-name=${input.name}\n#SBATCH --output=${path.join(env.USER_DIR, ctx.session.user.id, "output", newJobId, jobType.arrayJob ? "slurmout-%a.txt" : "slurmout.txt")}`;
-
-        if (jobType.arrayJob) {
-          //We count the number of ZIP folders in the input directory
-          //This tells us how many array runs we need to do
-          const zipFolders = fs
-            .readdirSync(
-              path.join(env.USER_DIR, ctx.session.user.id, "input", newJobId),
-            )
-            .filter((file) => file.endsWith(".zip"));
-          const numZipFolders = zipFolders.length;
-
-          //If it is an array job, we need to add the array index to the filename
-          script += `\n#SBATCH --array=1-${numZipFolders}\n\n`;
-
-          //Each zip folder is called [fileId]-[number].zip, we extract the files in the zip folder into a folder called [number]
-          zipFolders.forEach((zipFolder) => {
-            const zip = new AdmZip(
-              path.join(env.USER_DIR, "unclaimed", zipFolder),
-            );
-            zip.extractAllTo(
-              path.join(
-                env.USER_DIR,
-                ctx.session.user.id,
-                "input",
-                newJobId,
-                zipFolder.split("-")[1]!,
-              ),
-              true,
-            );
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to create Job. Try",
           });
         }
 
-        
+        //Create an object with the users directores
+        const directories = {
+          input: path.join(env.USER_DIR, ctx.session.user.id, "input", job.id),
+          output: path.join(
+            env.USER_DIR,
+            ctx.session.user.id,
+            "output",
+            job.id,
+          ),
+          script: path.join(
+            env.USER_DIR,
+            ctx.session.user.id,
+            "script",
+            job.id,
+          ),
+          unclaimed: path.join(env.USER_DIR, "unclaimed"),
+        };
+
+        //Create the directories if they don't exist
+        fs.mkdirSync(directories.input, { recursive: true });
+        fs.mkdirSync(directories.output, { recursive: true });
+        fs.mkdirSync(directories.script, { recursive: true });
+
+        //Used to store the number of files uploaded for an array job
+        let numZipFiles: number | undefined;
+        //Check if the job accepts file uploads
+        if (jobType.hasFileUpload) {
+          //If it does, we check if it's an array job. (All array jobs have file uploads).
+          if (jobType.arrayJob) {
+            /*
+            If it's an array job, the user will have uploaded multiple ZIP files.
+            They'll follow the naming convention [fileId]-[arrayIndex].zip
+            We need to extract the files from each ZIP file in to an [arrayIndex] folder in the
+            input directory for this job.
+            */
+            //Find the ZIP files in the unclaimed directory
+            const zipFiles = fs
+              .readdirSync(directories.unclaimed)
+              .filter((file) => {
+                return file.startsWith(fileId!);
+              });
+            numZipFiles = zipFiles.length;
+            //For each ZIP File, we extract the files into the input directory
+            zipFiles.forEach((zipFile) => {
+              const zip = new AdmZip(path.join(directories.unclaimed, zipFile));
+              fs.mkdirSync(
+                path.join(directories.input, zipFile.split("-")[1]!),
+              );
+              zip.extractAllTo(
+                path.join(directories.input, zipFile.split("-")[1]!),
+              );
+            });
+          } else {
+            //If it's not an array job, it'll either be a single file, or a single ZIP file.
+            //If it's a single file, we move it to the input directory
+            const file = fs.readdirSync(directories.unclaimed).find((file) => {
+              return file.startsWith(fileId!);
+            });
+
+            if (!file) {
+              tx.rollback();
+              throw new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: "Failed to find uploaded file",
+              });
+            }
+
+            if (!file.endsWith(".zip")) {
+              fs.renameSync(
+                path.join(directories.unclaimed, file),
+                path.join(directories.input, file),
+              );
+            } else {
+              //If it's a zip file, we extract the files into the input directory
+              const zip = new AdmZip(path.join(directories.unclaimed, file));
+              zip.extractAllTo(directories.input);
+            }
+          }
+        }
+
+        //Grab the original script template
+        let script = jobType.script;
+        //Swap out /r/n with /n
+        script = script.replace("\r\n", "\n");
+        //Replace the parameter placeholders with the provided parameters
+        parameters?.forEach((param) => {
+          script = script.replace(`{{${param.key}}}`, param.value);
+        });
+
+        // //Add the Slurm Directives
+        // script = `#!/bin/bash\n#SBATCH --job-name=${job.name}\n#SBATCH --output=${path.join(directories.output, jobType.arrayJob ? "slurmout-%a.txt" : "slurmout.txt")}`;
+
+        //Check for any variables that follow $file[number]
+        const fileVariables = Array.from(new Set(script.match(/\$file\d+/g)));
+
+        fileVariables.forEach((fileVariable) => {
+          const fVar = fileVariable.split("$")[1]!;
+          const fileName = fs
+            .readdirSync(directories.input)
+            .find((file) => file.startsWith(fVar));
+          script = `${fVar}="${directories.input}/${fileName}"`;
+        });
+
+        //Check for any variables that follow $arrayfile[number]
+        const arrayFileVariables = Array.from(
+          new Set(script.match(/\$arrayfile\d+/g)),
+        );
       });
     }),
 });
