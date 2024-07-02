@@ -235,15 +235,10 @@ export const jobsRouter = createTRPCRouter({
           `#!/bin/bash\n#SBATCH --job-name=${job.name}\n#SBATCH --output=${path.join(directories.output, jobType.arrayJob ? "slurmout-%a.txt" : "slurmout.txt")}\n` +
           script;
 
-        console.log(script);
-
-        //Write the script to the script directory
-        fs.writeFileSync(path.join(directories.script, "script.sh"), script);
-
         try {
           const jobData = {
             jobId: job.id,
-            scriptPath: path.join(directories.script, "script.sh"),
+            scriptPath: script,
             directories,
             authCode: job.authCode,
           };

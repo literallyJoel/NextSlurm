@@ -1,6 +1,8 @@
 import amqp from "amqplib/callback_api";
 import { exec } from "child_process";
 import fetch from "node-fetch";
+import path from "path";
+import fs from "fs";
 
 async function consumeJobs() {
   const amqpHost = process.env.AMQP_HOST || "amqp://localhost"; // Default if not set
@@ -20,12 +22,11 @@ async function consumeJobs() {
 
           const jobData = JSON.parse(msg.content.toString()) as {
             jobId: string;
-            scriptPath: string;
+            script: string;
             directories: {
               input: string;
               output: string;
               script: string;
-              unclaimed: string;
             };
             authCode: string;
           };
@@ -42,7 +43,15 @@ async function consumeJobs() {
               });
             };
 
-            const slurmId = (await execAsync(`sbatch ${jobData.scriptPath}`))
+            const scriptPath = path.join(
+              jobData.directories.script,
+              "script.sh",
+            );
+
+            //Write the script to the script directory
+            fs.writeFileSync(scriptPath, jobData.script);
+
+            const slurmId = (await execAsync(`sbatch ${scriptPath}`))
               .split(" ")
               .pop();
 
