@@ -237,12 +237,10 @@ export const jobs = createTable("job", {
     .primaryKey()
     .$defaultFn(() => v4()),
   name: text("name").notNull(),
-  startTime: int("startTime", { mode: "timestamp" })
-    .default(sql`CURRENT_TIMESTAMP`)
-    .notNull(),
+  startTime: int("startTime", { mode: "timestamp" }),
   endTime: int("endTime", { mode: "timestamp" }),
-  //0 is running, 1 is completed, 2 is failed.
-  status: int("status", { mode: "number" }).notNull().default(0),
+  //queued, runnning, completed, failed
+  status: text("status").default("queued"),
   createdBy: text("createdBy")
     .references(() => users.id)
     .notNull(),
@@ -252,6 +250,8 @@ export const jobs = createTable("job", {
   //Every job requries a slurmId, but we need to create the record before we can set it.
   slurmId: text("slurmId"),
   fileId: text("fileId"),
+  //Used for auth on the job status endpoints
+  authCode: text("authCode").notNull().default(v4()),
 });
 
 export const jobParameters = createTable(

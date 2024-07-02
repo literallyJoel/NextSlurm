@@ -20,6 +20,8 @@ export const env = createEnv({
       process.env.VERCEL ? z.string() : z.string().url(),
     ),
     USER_DIR: z.string().default("/home/nextslurm/user"),
+    AMQP_HOST: z.string().url(),
+    SERVER_URL: z.string().url(),
   },
 
   /**
@@ -41,6 +43,8 @@ export const env = createEnv({
     NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
     NEXTAUTH_URL: process.env.NEXTAUTH_URL,
     USER_DIR: process.env.USER_DIR,
+    AMQP_HOST: process.env.AMQP_HOST,
+    SERVER_URL: process.env.SERVER_URL,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

@@ -116,7 +116,7 @@ export default function CreateJobType() {
       }, "Job name, output, and array directives must not be included. These will be added automatically."),
     hasFileUpload: z.boolean().default(false),
     arrayJob: z.boolean().default(false),
-    organisationId: z.string().uuid(),
+    organisationId: selected ? z.string().uuid().optional() : z.string().uuid(),
     parameters: z
       .array(
         z.object({
@@ -429,7 +429,7 @@ export default function CreateJobType() {
                         Directives.
                       </span>{" "}
                       These will be added automatically.
-                      {fileUploadWatcher && !arrayJobWatcher && (
+                      {fileUploadWatcher && (
                         <>
                           <br />
                           Use bash variables{" "}
@@ -441,15 +441,9 @@ export default function CreateJobType() {
                       {arrayJobWatcher && (
                         <>
                           <br />
-                          Uploaded files will be treated as input for each job
-                          in the array. Use the $arrayfile bash variable to
-                          access the file. <br /> If multiple files are required
-                          for each array run, use{" "}
-                          <span className="text-orange-400">
-                            $arrayfile1
-                          </span>,{" "}
-                          <span className="text-orange-400">$arrayfile2</span>,{" "}
-                          etc.
+                          The user will be able to upload multiple zip files.
+                          $file1, $file2, etc will refer to the files for that
+                          array run.
                         </>
                       )}
                     </FormDescription>
