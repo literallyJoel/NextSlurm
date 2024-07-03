@@ -15,8 +15,6 @@ export default async function Home() {
     redirect("/api/auth/signin");
   }
 
-  function jobsTest() {}
-
   return (
     <main className="flex min-h-screen flex-col bg-slate-900 text-white">
       <div className="container flex flex-col items-center justify-center gap-12 px-4 py-16">

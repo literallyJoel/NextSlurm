@@ -9,7 +9,7 @@ export default function Temp() {
     createJob.mutate(
       {
         name: "Test",
-        jobTypeId: "fa25a852-a8d3-4725-a7c7-491ceaac80e0",
+        jobTypeId: "7413f6b1-9d0e-4cf8-9562-f3a309dd2c4f",
         parameters: [{ key: "test", value: "hello, world!" }],
       },
       {

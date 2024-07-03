@@ -1,9 +1,5 @@
 import { z } from "zod";
-import {
-  createTRPCRouter,
-  globalAdminProcedure,
-  protectedProcedure,
-} from "../trpc";
+import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
 import {
   jobTypeParameters,
@@ -11,6 +7,7 @@ import {
   sharedJobTypes,
 } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
+import logger from "@/logging/logger";
 
 export const jobTypesRouter = createTRPCRouter({
   get: protectedProcedure
@@ -41,6 +38,7 @@ export const jobTypesRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       let jobType;
       if (input.id) {
+        //If a jobTypeId is provided, we query the db for the ID.
         jobType = await ctx.db.query.jobTypes.findFirst({
           where: (jobTypes, { eq }) => eq(jobTypes.id, input.id),
           with: {
@@ -54,6 +52,7 @@ export const jobTypesRouter = createTRPCRouter({
           },
         });
       } else {
+        //Otherwise, we query the db for the createdBy.
         jobType = await ctx.db.query.jobTypes.findFirst({
           where: (jobTypes, { eq }) => eq(jobTypes.createdBy, input.createdBy!),
           with: {
@@ -99,7 +98,12 @@ export const jobTypesRouter = createTRPCRouter({
         });
 
         //If there are no instances, we return unauthorized
-        if (!_jt) throw new TRPCError({ code: "UNAUTHORIZED" });
+        if (!_jt) {
+          logger.warning(
+            `Unauthorized attempt to access job type with id ${jobType.id} by user with id ${ctx.session.user.id}`,
+          );
+          throw new TRPCError({ code: "UNAUTHORIZED" });
+        }
       }
 
       return jobType;
@@ -204,6 +208,9 @@ export const jobTypesRouter = createTRPCRouter({
         jobType.createdBy !== ctx.session.user.id &&
         ctx.session.user.role !== 1
       ) {
+        logger.warning(
+          `Unauthorized attempt to update job type with id ${input.id} by user with id ${ctx.session.user.id}`,
+        );
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
@@ -239,6 +246,9 @@ export const jobTypesRouter = createTRPCRouter({
         Only global admins can do this.
         */
       if (!input.organisationId && ctx.session.user.role !== 1) {
+        logger.warning(
+          `Unauthorized attempt to create global job type by user with id ${ctx.session.user.id}`,
+        );
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
@@ -255,6 +265,9 @@ export const jobTypesRouter = createTRPCRouter({
         });
 
         if (!org) {
+          logger.warning(
+            `Unauthorized attempt to create job type for organisationId ${Input.organisationId} by user with id ${ctx.session.user.id}`,
+          );
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
       }

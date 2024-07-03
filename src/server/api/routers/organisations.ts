@@ -1,4 +1,4 @@
-import { db as _db } from "@/server/db";
+import { db } from "@/server/db";
 import { organisationMembers, organisations, users } from "@/server/db/schema";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -8,11 +8,7 @@ import {
   protectedProcedure,
 } from "../trpc";
 import { TRPCError } from "@trpc/server";
-
-/*
-Returns if the provided user is a member of the provided organisation
-If a role is provided, only returns orgs where they are that role
-*/
+import logger from "@/logging/logger";
 
 const isMember = z
   .function()
@@ -20,19 +16,14 @@ const isMember = z
     z.object({
       organisationId: z.string().uuid(),
       userId: z.string().uuid(),
-      //We can't directly access the db type here, so we use any and assert later
       db: z.any(),
       role: z.number().min(0).max(2).optional(),
     }),
   )
   .returns(z.promise(z.boolean()))
   .implement(async (input) => {
-    //Grab the input
-    const { organisationId, userId, db, role } = input;
-    //Assert the db type
-    const dbWithType = db as typeof _db;
+    const { organisationId, userId, role } = input;
 
-    //If a role is provided, we include the role in the where clause, else we only check the user and org IDs
     const whereClause = role
       ? and(
           eq(organisationMembers.organisationId, organisationId),
@@ -46,16 +37,11 @@ const isMember = z
           eq(organisationMembers.userId, userId),
         );
 
-    //Return whether there are any results
-    return (
-      (
-        await dbWithType
-          .select()
-          .from(organisationMembers)
-          .where(whereClause)
-          .limit(1)
-      ).length !== 0
-    );
+    const orgMembers = db.query.organisationMembers.findFirst({
+      where: whereClause,
+    });
+
+    return !!orgMembers;
   });
 
 const isGlobalOrOrgAdmin = z
@@ -70,16 +56,25 @@ const isGlobalOrOrgAdmin = z
   )
   .returns(z.promise(z.boolean()))
   .implement(async (input) => {
-    //Check if they're a global admin
-    if (input.role === 1) return true;
+    if (input.role === 1) {
+      logger.info(`User ${input.userId} authorized as global admin`);
+      return true;
+    }
 
-    //Check if they're an admin of the organisation
-    return isMember({
+    const isOrgAdmin = await isMember({
       organisationId: input.organisationId,
       userId: input.userId,
       db: input.db,
       role: 2,
     });
+
+    if (!isOrgAdmin) {
+      logger.warn(
+        `User ${input.userId} attempted unauthorized action for organisation ${input.organisationId}`,
+      );
+    }
+
+    return isOrgAdmin;
   });
 
 export const organisationsRouter = createTRPCRouter({
@@ -92,61 +87,74 @@ export const organisationsRouter = createTRPCRouter({
     )
     .output(z.object({ organisationId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      //Start a DB transaction
+      logger.info(
+        `Attempting to create organisation '${input.organisationName}' with admin ${input.adminId}`,
+      );
       return await ctx.db.transaction(async (tx) => {
-        //Check the provided userId exists
-        const admin = await tx
-          .select()
-          .from(users)
-          .where(eq(users.id, input.adminId));
+        const admin = await tx.query.users.findFirst({
+          where: (users, { eq }) => eq(users.id, input.adminId),
+        });
 
-        //If the user doesn't exist we throw a bad request
         if (!admin) {
+          logger.error(
+            `Failed to create organisation for user with id ${ctx.session.user.id}. The selected admin ${input.adminId} does not exist`,
+          );
           throw new TRPCError({ code: "BAD_REQUEST" });
         }
 
-        //If the user does exist, we attempt to create the new organisation in the DB
         const newOrg = await tx
           .insert(organisations)
           .values({ name: input.organisationName })
           .returning({ id: organisations.id });
 
-        //If it fails we rollback on the transaction and throw a 500
         if (!newOrg[0]) {
+          logger.error(
+            `Failed to create organisation with name ${input.organisationName} for user ${ctx.session.user.id}. Failed to create database entry`,
+          );
           tx.rollback();
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         }
 
-        //If it succeeds we attempt to add the organisation admin
         const orgAdmin = await tx
           .insert(organisationMembers)
           .values({ organisationId: newOrg[0].id, userId: input.adminId })
           .returning();
 
-        //If it fails for any reason, we rollback so there isn't an org with no members, and we throw a 500
         if (!orgAdmin) {
+          logger.error(
+            `Failed to create organisation with name ${input.organisationName} for user ${ctx.session.user.id}. Failed to add admin to organisation`,
+          );
           tx.rollback();
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         }
 
+        logger.info(
+          `Successfully created organisation '${input.organisationName}' with ID ${newOrg[0].id} and admin ${input.adminId}`,
+        );
         return { organisationId: newOrg[0].id };
       });
     }),
+
   delete: globalAdminProcedure
     .input(z.object({ organisationId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
+      logger.info(
+        `Attempting to delete organisation with ID ${input.organisationId}`,
+      );
       await ctx.db.transaction(async (tx) => {
-        //First we remove the organisation members
         await tx
           .delete(organisationMembers)
           .where(eq(organisationMembers.organisationId, input.organisationId));
 
-        //Finally we remove the organisation
         await tx
           .delete(organisations)
           .where(eq(organisations.id, input.organisationId));
       });
+      logger.info(
+        `Successfully deleted organisation with ID ${input.organisationId}`,
+      );
     }),
+
   rename: globalAdminProcedure
     .input(
       z.object({
@@ -155,19 +163,23 @@ export const organisationsRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      //Simple update call to the database to change the org name
+      logger.info(
+        `Attempting to rename organisation ${input.organisationId} to '${input.organisationName}'`,
+      );
       await ctx.db
         .update(organisations)
         .set({ name: input.organisationName })
         .where(eq(organisations.id, input.organisationId));
+      logger.info(
+        `Successfully renamed organisation ${input.organisationId} to '${input.organisationName}'`,
+      );
     }),
+
   get: protectedProcedure
     .input(
       z
         .union([
-          //If an organisationId is provided, a user cannot be provided
           z.object({ organisationId: z.string().uuid(), user: z.undefined() }),
-          //If a user is provided, an organistionId cannot be provided
           z.object({
             organisationId: z.undefined(),
             user: z.object({
@@ -176,23 +188,25 @@ export const organisationsRouter = createTRPCRouter({
             }),
           }),
         ])
-        //Nothing has to be provided
         .optional(),
     )
     .query(async ({ ctx, input }) => {
-      //If there's no input, we ensure they'rea global admin before returning all orgs
       if (!input) {
+        logger.info(
+          `Global admin ${ctx.session.user.id} requesting all organisations`,
+        );
         if (ctx.session.user.role !== 1) {
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
-
         return (await ctx.db.select().from(organisations).all()) ?? [];
       }
 
       const { organisationId, user } = input;
 
-      //If an organisationId is provided, we ensure they're either a global admin or in that orgainsation, and return the org
       if (organisationId) {
+        logger.info(
+          `User ${ctx.session.user.id} requesting information for organisation ${organisationId}`,
+        );
         if (ctx.session.user.role !== 1) {
           const isOrgMember = await isMember({
             organisationId: organisationId,
@@ -213,8 +227,8 @@ export const organisationsRouter = createTRPCRouter({
         );
       }
 
-      //If a user is provided, we check they are either a global admin, or that user, before returning that users orgs
       if (user) {
+        logger.info(`Requesting organisations for user ${user.userId}`);
         if (
           ctx.session.user.role !== 1 &&
           ctx.session.user.id !== user.userId
@@ -235,7 +249,6 @@ export const organisationsRouter = createTRPCRouter({
               eq(organisations.id, organisationMembers.organisationId),
             )
             .where(
-              //If a role is provided, we filter by role alsd
               user.role
                 ? and(
                     eq(organisationMembers.userId, user.userId),
@@ -246,6 +259,7 @@ export const organisationsRouter = createTRPCRouter({
         );
       }
     }),
+
   addMember: protectedProcedure
     .input(
       z.union([
@@ -264,7 +278,9 @@ export const organisationsRouter = createTRPCRouter({
       ]),
     )
     .mutation(async ({ ctx, input }) => {
-      //Check the requestor is a global admin or admin in the requested organisation
+      logger.info(
+        `Attempting to add ${input.userId || input.userEmail} to organisation ${input.organisationId} with role ${input.role}`,
+      );
       if (
         !(await isGlobalOrOrgAdmin({
           organisationId: input.organisationId,
@@ -273,23 +289,24 @@ export const organisationsRouter = createTRPCRouter({
           db: ctx.db,
         }))
       ) {
-        //Throw a 401 if not
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
-      //If they're being adde by Id, we can just add the member
       if (input.userId) {
-        return (
+        const result = (
           await ctx.db.insert(organisationMembers).values(input).returning()
         )[0];
+        logger.info(
+          `Successfully added ${input.userId} to organisation ${input.organisationId} with role ${input.role}`,
+        );
+        return result;
       } else {
-        //Otherwise, we need to check the user exists and grab their id
         const user = await ctx.db
           .select({ id: users.id })
           .from(users)
           .where(eq(users.email, input.userEmail!));
         if (user[0]) {
-          return await ctx.db
+          const result = await ctx.db
             .insert(organisationMembers)
             .values({
               organisationId: input.organisationId,
@@ -297,9 +314,18 @@ export const organisationsRouter = createTRPCRouter({
               role: input.role,
             })
             .returning();
+          logger.info(
+            `Successfully added ${input.userEmail} to organisation ${input.organisationId} with role ${input.role}`,
+          );
+          return result;
+        } else {
+          logger.warn(
+            `Attempted to add non-existent user with email ${input.userEmail} to organisation ${input.organisationId}`,
+          );
         }
       }
     }),
+
   removeMember: protectedProcedure
     .input(
       z.object({
@@ -308,7 +334,9 @@ export const organisationsRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      //Check the requestor is global admin or org admin
+      logger.info(
+        `Attempting to remove user ${input.userId} from organisation ${input.organisationId}`,
+      );
       if (
         !(await isGlobalOrOrgAdmin({
           organisationId: input.organisationId,
@@ -317,12 +345,10 @@ export const organisationsRouter = createTRPCRouter({
           db: ctx.db,
         }))
       ) {
-        //Throw 401 if not
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
-      //Remove the user from the org
-      return await ctx.db
+      const result = await ctx.db
         .delete(organisationMembers)
         .where(
           and(
@@ -331,7 +357,12 @@ export const organisationsRouter = createTRPCRouter({
           ),
         )
         .returning();
+      logger.info(
+        `Successfully removed user ${input.userId} from organisation ${input.organisationId}`,
+      );
+      return result;
     }),
+
   getMember: protectedProcedure
     .input(
       z.object({
@@ -340,7 +371,9 @@ export const organisationsRouter = createTRPCRouter({
       }),
     )
     .query(async ({ ctx, input }) => {
-      //Check the requestor is either a global admin or in the org
+      logger.info(
+        `Retrieving member information for organisation ${input.organisationId}${input.userId ? ` and user ${input.userId}` : ""}`,
+      );
       if (ctx.session.user.role !== 1) {
         const isOrgMember = await isMember({
           organisationId: input.organisationId,
@@ -349,24 +382,20 @@ export const organisationsRouter = createTRPCRouter({
         });
 
         if (!isOrgMember) {
-          //If not throw 401
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
       }
 
       return await ctx.db
         .select({
-          //Grab the info from the users table
           id: organisationMembers.userId,
           name: users.name,
           email: users.email,
           role: organisationMembers.role,
         })
         .from(organisationMembers)
-        //Join the orgMembers and users table on the userId
         .leftJoin(users, eq(organisationMembers.userId, users.id))
         .where(
-          //If a userID is provided, we only return for that user, else all members of the org
           input.userId
             ? and(
                 eq(organisationMembers.userId, input.userId),
@@ -375,6 +404,7 @@ export const organisationsRouter = createTRPCRouter({
             : eq(organisationMembers.organisationId, input.organisationId),
         );
     }),
+
   updateMember: protectedProcedure
     .input(
       z.object({
@@ -384,7 +414,9 @@ export const organisationsRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      //Ensure the user is either an org or global admin
+      logger.info(
+        `Attempting to update role of user ${input.userId} in organisation ${input.organisationId} to ${input.role}`,
+      );
       if (
         !isGlobalOrOrgAdmin({
           userId: ctx.session.user.id,
@@ -405,5 +437,8 @@ export const organisationsRouter = createTRPCRouter({
             eq(organisationMembers.userId, input.userId),
           ),
         );
+      logger.info(
+        `Successfully updated role of user ${input.userId} in organisation ${input.organisationId} to ${input.role}`,
+      );
     }),
 });

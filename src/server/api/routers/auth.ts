@@ -3,6 +3,7 @@ import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
 import { eq } from "drizzle-orm";
 import { sessions, users } from "@/server/db/schema";
 import argon2 from "argon2";
+import logger from "@/logging/logger";
 
 export const authRouter = createTRPCRouter({
   //Handles logins for local accounts
@@ -40,23 +41,23 @@ export const authRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       //Grab the user from the db using their email.
-      const user = (
-        await ctx.db
-          .select({
-            id: users.id,
-            name: users.name,
-            email: users.email,
-            role: users.role,
-            requiresReset: users.requiresReset,
-            password: users.password,
-          })
-          .from(users)
-          .where(eq(users.email, input.email))
-          .limit(1)
-      )[0];
+      const user = await ctx.db.query.users.findFirst({
+        where: (users, { eq }) => eq(users.email, input.email),
+        columns: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          requiresReset: true,
+          password: true,
+        },
+      });
 
       //If there's no password, it means it's not a local account.
       if (!user?.password) {
+        logger.warning(
+          `Attempted login with email ${input.email}, but account is not local`,
+        );
         return undefined;
       }
 
@@ -67,6 +68,9 @@ export const authRouter = createTRPCRouter({
       );
 
       if (!passwordMatches) {
+        logger.warning(
+          `Attempted login with email ${input.email}, but password was incorrect`,
+        );
         return undefined;
       }
 
@@ -78,5 +82,4 @@ export const authRouter = createTRPCRouter({
         requresReset: user.requiresReset,
       };
     }),
-
 });
