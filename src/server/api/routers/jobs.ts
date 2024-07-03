@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
-import { jobs } from "@/server/db/schema";
+import {
+  jobTypes,
+  jobs,
+  organisationMembers,
+  sharedJobs,
+  users,
+} from "@/server/db/schema";
 import logger from "@/logging/logger";
 import {
   connectToAmqp,
@@ -11,6 +17,7 @@ import {
   validateFileId,
   validateJobType,
 } from "@/server/helpers/jobsHelper";
+import { and, desc, eq, exists, or } from "drizzle-orm";
 
 export const jobsRouter = createTRPCRouter({
   create: protectedProcedure
@@ -131,7 +138,7 @@ export const jobsRouter = createTRPCRouter({
           };
 
           const { connection, channel } = await connectToAmqp();
-          
+
           channel.sendToQueue(
             "slurmJob",
             Buffer.from(JSON.stringify(jobData)),
@@ -154,5 +161,148 @@ export const jobsRouter = createTRPCRouter({
           });
         }
       });
+    }),
+  get: protectedProcedure
+    .input(z.object({ jobId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const job = await ctx.db.query.jobs.findFirst({
+        where: (jobs, { eq }) => eq(jobs.id, input.jobId),
+      });
+
+      if (!job) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Job not found",
+        });
+      }
+
+      if (job.createdBy !== ctx.session.user.id) {
+        const organisationMemberships =
+          await ctx.db.query.organisationMembers.findMany({
+            where: (organisationMembers, { eq }) =>
+              eq(organisationMembers.userId, ctx.session.user.id),
+          });
+
+        const jobShares = await ctx.db.query.sharedJobs.findFirst({
+          where: (sharedJobs, { eq, or, and, inArray }) =>
+            and(
+              eq(sharedJobs.jobId, job.id),
+              or(
+                inArray(
+                  sharedJobs.organisationId,
+                  organisationMemberships.map((m) => m.organisationId),
+                ),
+                eq(sharedJobs.userId, ctx.session.user.id),
+              ),
+            ),
+        });
+
+        if (!jobShares) {
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+          });
+        }
+      }
+      return job;
+    }),
+  getAll: protectedProcedure
+    .input(
+      z.object({
+        all: z.boolean().optional(),
+        filter: z
+          .union([
+            z.literal("running"),
+            z.literal("completed"),
+            z.literal("failed"),
+            z.literal("queued"),
+          ])
+          .optional(),
+        number: z.number().min(1).optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const { db } = ctx;
+      const userId = ctx.session.user.id;
+
+      // For global admins, if the input is true then we return all jobs
+      if (ctx.session.user.role === 1 && input.all === true) {
+        return (
+          await db.query.jobs.findMany({
+            with: {
+              createdBy: { columns: { name: true, id: true } },
+              jobType: { columns: { name: true, id: true } },
+            },
+          })
+        ).map((r) => ({
+          ...r,
+          authCode: undefined,
+        }));
+      }
+
+      const query = db
+        .select({
+          job: jobs,
+          createdBy: {
+            name: users.name,
+            id: users.id,
+          },
+          jobType: {
+            name: jobTypes.name,
+            id: jobTypes.id,
+          },
+        })
+        .from(jobs)
+        .leftJoin(users, eq(jobs.createdBy, users.id))
+        .leftJoin(jobTypes, eq(jobs.jobTypeId, jobTypes.id))
+        .where(
+          and(
+            or(
+              // Jobs created by the user
+              eq(jobs.createdBy, userId),
+              // Jobs shared directly with the user
+              exists(
+                db
+                  .select()
+                  .from(sharedJobs)
+                  .where(
+                    and(
+                      eq(sharedJobs.jobId, jobs.id),
+                      eq(sharedJobs.userId, userId),
+                    ),
+                  ),
+              ),
+              // Jobs shared with organizations the user is a member of
+              exists(
+                db
+                  .select()
+                  .from(sharedJobs)
+                  .innerJoin(
+                    organisationMembers,
+                    and(
+                      eq(
+                        sharedJobs.organisationId,
+                        organisationMembers.organisationId,
+                      ),
+                      eq(organisationMembers.userId, userId),
+                    ),
+                  )
+                  .where(eq(sharedJobs.jobId, jobs.id)),
+              ),
+            ),
+            input.filter ? eq(jobs.status, input.filter) : undefined,
+          ),
+        );
+
+      // Apply ordering and limit
+      query.orderBy(desc(jobs.startTime)).limit(input.number ?? 1000);
+
+      const results = await query;
+
+      return results.map((r) => ({
+        ...r.job,
+        createdBy: r.createdBy,
+        jobType: r.jobType,
+        authCode: undefined,
+      }));
     }),
 });

@@ -1,4 +1,4 @@
-import logger from "./logging/logger";
+import logger from "@/logging/logger";
 import amqp from "amqplib";
 import { exec } from "child_process";
 import fetch from "node-fetch";

@@ -22,7 +22,6 @@ export const env = createEnv({
     USER_DIR: z.string().default("/home/nextslurm/user"),
     AMQP_HOST: z.string().url(),
     SERVER_URL: z.string().url(),
-    LOG_LOCATION: z.string(),
   },
 
   /**
@@ -46,7 +45,6 @@ export const env = createEnv({
     USER_DIR: process.env.USER_DIR,
     AMQP_HOST: process.env.AMQP_HOST,
     SERVER_URL: process.env.SERVER_URL,
-    LOG_LOCATION: process.env.LOG_LOCATION,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially
