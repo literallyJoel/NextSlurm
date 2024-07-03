@@ -30,7 +30,7 @@ const formSchema = z.object({
 });
 
 export default function ProviderSetup() {
-  const enableProviders = api.providers.create.useMutation();
+  const enableProviders = api.config.createProvider.useMutation();
   const completeSetup = api.setup.completeSetup.useMutation();
   const { getProviders, updateProviderInfo, prevStep, getProviderInfo } =
     useSetup();

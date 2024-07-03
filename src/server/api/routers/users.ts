@@ -14,6 +14,8 @@ import {
 } from "@/server/db/schema";
 import { TRPCError } from "@trpc/server";
 import { and, eq, inArray } from "drizzle-orm";
+import logger from "@/logging/logger";
+
 const generatePassword = z
   .function()
   .args(z.number().optional().default(8))
@@ -84,92 +86,98 @@ export const usersRouter = createTRPCRouter({
     )
     .output(z.object({ userId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      //Autogenerate a password if requested
+      logger.info(`Creating new user with email: ${input.email}`);
       const plaintext = input.generatePassword
         ? generatePassword(8)
         : input.password;
 
-      //We hash the password if there is one, or null it if there isn't
       const password = plaintext ? await argon2.hash(plaintext) : null;
 
-      //Begin transactrion
       return await ctx.db.transaction(async (tx) => {
-        //Create the user
-        const user = await tx
-          .insert(users)
-          .values({
-            email: input.email,
-            name: input.name,
-            password: password,
-            role: input.role,
-          })
-          .returning({ id: users.id });
+        try {
+          const user = await tx
+            .insert(users)
+            .values({
+              email: input.email,
+              name: input.name,
+              password: password,
+              role: input.role,
+            })
+            .returning({ id: users.id });
 
-        //If no userId is returned we rollback and throw an error
-        if (!user[0]) {
+          if (!user[0]) {
+            logger.error("Failed to create user");
+            tx.rollback();
+            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          }
+
+          const orgMembership = await tx
+            .insert(organisationMembers)
+            .values({
+              organisationId: input.organisationId,
+              userId: user[0].id,
+              role: input.organisationRole,
+            })
+            .returning();
+
+          if (!orgMembership[0]) {
+            logger.error("Failed to create organization membership");
+            tx.rollback();
+            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+          }
+
+          logger.info(`User created successfully with ID: ${user[0].id}`);
+          return { userId: user[0].id };
+        } catch (e) {
+          logger.error("Error creating user", { cause: e });
           tx.rollback();
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         }
-
-        //Add them to the organisation
-        const orgMembership = await tx
-          .insert(organisationMembers)
-          .values({
-            organisationId: input.organisationId,
-            userId: user[0].id,
-            role: input.organisationRole,
-          })
-          .returning();
-
-        //If we don't get the org membership back we rollback
-        if (!orgMembership[0]) {
-          tx.rollback();
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-        }
-
-        return { userId: user[0].id };
       });
     }),
+
   delete: protectedProcedure
     .input(z.object({ userId: z.string() }).optional())
     .mutation(async ({ ctx, input }) => {
-      /*
-        If they've provided a user to delete, we ensure they're either
-        a global admin, or it's their own ID
-        */
       if (input) {
         if (
           input.userId !== ctx.session.user.id &&
           ctx.session.user.role !== 1
         ) {
+          logger.warn(
+            `Unauthorized delete attempt for user ID: ${input.userId}`,
+          );
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
       }
 
       const _id = input?.userId ?? ctx.session.user.id;
+      logger.info(`Deleting user with ID: ${_id}`);
 
-      //Start a transaction
       return await ctx.db.transaction(async (tx) => {
-        //Remove the users org memberships
-        await tx
-          .delete(organisationMembers)
-          .where(eq(organisationMembers.userId, _id));
+        try {
+          await tx
+            .delete(organisationMembers)
+            .where(eq(organisationMembers.userId, _id));
 
-        const user = await tx
-          .delete(users)
-          .where(eq(users.id, _id))
-          .returning({ id: users.id });
+          const user = await tx
+            .delete(users)
+            .where(eq(users.id, _id))
+            .returning({ id: users.id });
 
-        return { userId: user[0]?.id ?? "" };
+          logger.info(`User deleted successfully: ${user[0]?.id ?? ""}`);
+          return { userId: user[0]?.id ?? "" };
+        } catch (e) {
+          logger.error(`Error deleting user with ID: ${_id}`, { cause: e });
+          tx.rollback();
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        }
       });
     }),
+
   update: protectedProcedure
     .input(
       z.union([
-        /*
-        If a userId is provided, it means an admin is updating another user.
-        We therefore prevent them from changing the users password.
-        */
         z.object({
           userId: z.string().uuid(),
           name: z.string().optional(),
@@ -179,10 +187,6 @@ export const usersRouter = createTRPCRouter({
           role: z.number().min(0).max(1).optional(),
           requiresReset: z.boolean().optional(),
         }),
-        /*
-        If the user is updating their own account, they can update their password
-        but cannot change their own role. 
-      */
         z.object({
           userId: z.undefined(),
           name: z.string().optional(),
@@ -191,13 +195,9 @@ export const usersRouter = createTRPCRouter({
           password: z
             .string()
             .min(8)
-            //Contains an uppercase character
             .regex(/[A-Z]/)
-            //Contains a lowercase character
             .regex(/[a-z]/)
-            //contains a number
             .regex(/\d/)
-            //contains a special character
             .regex(/\W/)
             .optional(),
           role: z.undefined(),
@@ -206,37 +206,44 @@ export const usersRouter = createTRPCRouter({
       ]),
     )
     .mutation(async ({ ctx, input }) => {
+      const id = input.userId ?? ctx.session.user.id;
+      logger.info(`Updating user with ID: ${id}`);
+
       if (input.userId) {
-        //If a userId is provided, we ensure they are a global admin
         if (ctx.session.user.role !== 1) {
+          logger.warn(
+            `Unauthorized update attempt for user ID: ${input.userId}`,
+          );
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
       }
 
-      //Set ID to either the provided input, or the requestor
-      const id = input.userId ?? ctx.session.user.id;
+      try {
+        const password = input.password
+          ? await argon2.hash(input.password)
+          : undefined;
 
-      //Hash the password if a new oone is provided
-      const password = input.password
-        ? await argon2.hash(input.password)
-        : undefined;
+        const updated = await ctx.db
+          .update(users)
+          .set({
+            name: input.name,
+            email: input.email,
+            image: input.image,
+            password: password,
+            role: input.role,
+            requiresReset: input.requiresReset,
+          })
+          .where(eq(users.id, id))
+          .returning({ id: users.id });
 
-      //Update the user - if it's undefined it'll remain unchanged.
-      const updated = await ctx.db
-        .update(users)
-        .set({
-          name: input.name,
-          email: input.email,
-          image: input.image,
-          password: password,
-          role: input.role,
-          requiresReset: input.requiresReset,
-        })
-        .where(eq(users.id, id))
-        .returning({ id: users.id });
-
-      return updated[0];
+        logger.info(`User updated successfully: ${updated[0]?.id}`);
+        return updated[0];
+      } catch (e) {
+        logger.error(`Error updating user with ID: ${id}`, { cause: e });
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      }
     }),
+
   get: protectedProcedure
     .input(
       z
@@ -247,12 +254,12 @@ export const usersRouter = createTRPCRouter({
         .optional(),
     )
     .query(async ({ ctx, input }) => {
-      //If there's no input provided, we ensure they're a global admin and return all users
       if (!input) {
         if (ctx.session.user.role !== 1) {
+          logger.warn("Unauthorized attempt to get all users");
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
-
+        logger.info("Fetching all users");
         return await ctx.db
           .select({
             id: users.id,
@@ -265,15 +272,12 @@ export const usersRouter = createTRPCRouter({
           .all();
       }
 
-      /*
-      If there'es a specific user being looked for, 
-      we ensure they're either a global admin, or that user
-      */
-
       if (ctx.session.user.role !== 1 && ctx.session.user.id !== input.userId) {
+        logger.warn(`Unauthorized get attempt for user ID: ${input.userId}`);
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
+      logger.info(`Fetching user with ID: ${input.userId}`);
       return await ctx.db
         .select({
           id: users.id,
@@ -289,19 +293,23 @@ export const usersRouter = createTRPCRouter({
             : eq(users.id, input.userId),
         );
     }),
+
   isWhitelisted: publicProcedure
     .input(z.object({ email: z.string().email() }))
     .output(z.boolean())
     .query(async ({ ctx, input }) => {
-      return (
+      logger.info(`Checking if email is whitelisted: ${input.email}`);
+      const result =
         (
           await ctx.db
             .select({ id: users.id })
             .from(users)
             .where(eq(users.email, input.email))
-        ).length !== 0
-      );
+        ).length !== 0;
+      logger.info(`Email ${input.email} whitelisted: ${result}`);
+      return result;
     }),
+
   getOrganisations: protectedProcedure
     .input(
       z
@@ -317,20 +325,21 @@ export const usersRouter = createTRPCRouter({
         .optional(),
     )
     .query(async ({ ctx, input }) => {
-      //If user ID is provided, we ensure the user is either a global admin, or their own ID
-      if (input) {
+      if (input?.userId) {
         if (
           ctx.session.user.role !== 1 &&
           ctx.session.user.id !== input.userId
         ) {
+          logger.warn(
+            `Unauthorized getOrganisations attempt for user ID: ${input.userId}`,
+          );
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
       }
 
-      //Set id to either the userID if provided, or the requestors ID otherwise
       const id = input?.userId ?? ctx.session.user.id;
+      logger.info(`Fetching organizations for user ID: ${id}`);
 
-      //Grab the org info from the database
       return await ctx.db
         .select({
           id: organisations.id,
@@ -348,13 +357,12 @@ export const usersRouter = createTRPCRouter({
                 Array.isArray(input.role)
                   ? inArray(organisationMembers.role, input.role)
                   : eq(organisationMembers.role, input.role),
-
                 eq(organisationMembers.userId, id),
               )
             : eq(organisationMembers.userId, id),
         );
     }),
-  //Removes a users sessions from the database, used for the sign out everywhere functionality
+
   deleteSessions: protectedProcedure
     .input(z.object({ userId: z.string().uuid() }).optional())
     .mutation(async ({ ctx, input }) => {
@@ -363,11 +371,23 @@ export const usersRouter = createTRPCRouter({
           ctx.session.user.role !== 1 &&
           input.userId !== ctx.session.user.id
         ) {
+          logger.warn(
+            `Unauthorized deleteSessions attempt for user ID: ${input.userId}`,
+          );
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
       }
       const id = input?.userId ?? ctx.session.user.id;
+      logger.info(`Deleting sessions for user ID: ${id}`);
 
-      await ctx.db.delete(sessions).where(eq(sessions.userId, id));
+      try {
+        await ctx.db.delete(sessions).where(eq(sessions.userId, id));
+        logger.info(`Sessions deleted successfully for user ID: ${id}`);
+      } catch (e) {
+        logger.error(`Error deleting sessions for user ID: ${id}`, {
+          cause: e,
+        });
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      }
     }),
 });

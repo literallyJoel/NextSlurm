@@ -14,6 +14,8 @@ import { eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import argon2 from "argon2";
+import logger from "@/logging/logger";
+import { obscureEmail } from "@/server/helpers/authHelper";
 export const setupRouter = createTRPCRouter({
   //Used to determine whether to redirect to the first time setup screen
   getRequiresSetup: publicProcedure.query(async ({ ctx }) => {
@@ -29,6 +31,9 @@ export const setupRouter = createTRPCRouter({
     );
   }),
   completeSetup: globalAdminProcedure.mutation(async ({ ctx }) => {
+    logger.info(
+      `Marking setup as complete for user with ID ${ctx.session.user.id}`,
+    );
     await ctx.db.insert(config).values({ name: "isSetup", value: "true" });
   }),
   /*
@@ -70,6 +75,9 @@ export const setupRouter = createTRPCRouter({
       const orgs = await ctx.db.select().from(organisations).all();
 
       if (_users.length > 0 || orgs.length > 0) {
+        logger.warn(
+          `Unauthorized attempt to create user with email ${obscureEmail(input.email)}`,
+        );
         throw new TRPCError({ code: "NOT_FOUND" });
       }
 
@@ -92,6 +100,9 @@ export const setupRouter = createTRPCRouter({
 
         //Rollback if we don't get a user ID returned
         if (!user[0]) {
+          logger.error(
+            `Failed to create user with email ${obscureEmail(input.email)}. Initial setup failed.`,
+          );
           tx.rollback();
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         }
@@ -106,6 +117,9 @@ export const setupRouter = createTRPCRouter({
 
         //rollback if no org ID returned
         if (!org[0]) {
+          logger.error(
+            `Failed to create organisation with name ${input.organisationName}. Initial setup failed.`,
+          );
           tx.rollback();
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         }
@@ -123,6 +137,9 @@ export const setupRouter = createTRPCRouter({
 
         //If no org member is returned we rollback
         if (!orgMember[0]) {
+          logger.error(
+            `Failed to add user with email ${obscureEmail(input.email)} to organisation with name ${input.organisationName}. Initial setup failed.`,
+          );
           tx.rollback();
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         }
@@ -142,9 +159,16 @@ export const setupRouter = createTRPCRouter({
 
         //If no account record is returned, we rollback.
         if (!account[0]) {
+          logger.error(
+            `Failed to create account (oauth) for user with email ${obscureEmail(input.email)}. Initial setup failed.`,
+          );
           tx.rollback();
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
         }
+
+        logger.info(
+          `Created initial user with id ${user[0].userId} and initial organisation with id ${org[0].id}`,
+        );
       });
     }),
 });

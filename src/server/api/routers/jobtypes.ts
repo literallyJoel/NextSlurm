@@ -38,7 +38,7 @@ export const jobTypesRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       let jobType;
       if (input.id) {
-        //If a jobTypeId is provided, we query the db for the ID.
+        logger.info(`Fetching job type by ID: ${input.id}`);
         jobType = await ctx.db.query.jobTypes.findFirst({
           where: (jobTypes, { eq }) => eq(jobTypes.id, input.id),
           with: {
@@ -52,7 +52,7 @@ export const jobTypesRouter = createTRPCRouter({
           },
         });
       } else {
-        //Otherwise, we query the db for the createdBy.
+        logger.info(`Fetching job type by createdBy: ${input.createdBy}`);
         jobType = await ctx.db.query.jobTypes.findFirst({
           where: (jobTypes, { eq }) => eq(jobTypes.createdBy, input.createdBy!),
           with: {
@@ -68,21 +68,22 @@ export const jobTypesRouter = createTRPCRouter({
       }
 
       if (!jobType) {
+        logger.warn(`Job type not found for input: ${JSON.stringify(input)}`);
         throw new TRPCError({ code: "BAD_REQUEST" });
       }
 
-      //Ensure the user either created or has access to the job type
       if (
         jobType.createdBy.id !== ctx.session.user.id &&
         ctx.session.user.role !== 1
       ) {
-        //Grab a list of the organisations the user is a member of
+        logger.info(
+          `Checking access for user ${ctx.session.user.id} to job type ${jobType.id}`,
+        );
         const requestorOrgs = await ctx.db.query.organisationMembers.findMany({
           where: (organisationMembers, { eq }) =>
             eq(organisationMembers.userId, ctx.session.user.id),
         });
 
-        //Find the first instance of the job being shared with either the user or their orgs
         const _jt = await ctx.db.query.sharedJobTypes.findFirst({
           where: (sharedJobTypes, { eq, and, or, inArray }) =>
             and(
@@ -97,17 +98,18 @@ export const jobTypesRouter = createTRPCRouter({
             ),
         });
 
-        //If there are no instances, we return unauthorized
         if (!_jt) {
-          logger.warning(
+          logger.warn(
             `Unauthorized attempt to access job type with id ${jobType.id} by user with id ${ctx.session.user.id}`,
           );
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
       }
 
+      logger.info(`Successfully fetched job type ${jobType.id}`);
       return jobType;
     }),
+
   getAll: protectedProcedure
     .output(
       z.array(
@@ -130,7 +132,7 @@ export const jobTypesRouter = createTRPCRouter({
       ),
     )
     .query(async ({ ctx }) => {
-      //Grab all job types
+      logger.info(`Fetching all job types for user ${ctx.session.user.id}`);
       const jobTypes = await ctx.db.query.jobTypes.findMany({
         with: {
           parameters: true,
@@ -143,15 +145,15 @@ export const jobTypesRouter = createTRPCRouter({
         },
       });
 
-      //If they're not a global admin, filter the list to only include job types the user has access to
       if (ctx.session.user.role !== 1) {
-        //Grab a list of the organisations the user is a member of
+        logger.info(
+          `Filtering job types for non-admin user ${ctx.session.user.id}`,
+        );
         const requestorOrgs = await ctx.db.query.organisationMembers.findMany({
           where: (organisationMembers, { eq }) =>
             eq(organisationMembers.userId, ctx.session.user.id),
         });
 
-        //Filter the list to only include job types the user has access to
         const _jt = await ctx.db.query.sharedJobTypes.findMany({
           where: (sharedJobTypes, { eq, and, or, inArray }) =>
             and(
@@ -172,12 +174,14 @@ export const jobTypesRouter = createTRPCRouter({
         const filteredTypes = jobTypes.filter((type) => {
           return _jt.some((_jt) => _jt.jobTypeId === type.id);
         });
+        logger.info(`Returned ${filteredTypes.length} filtered job types`);
         return filteredTypes;
       }
 
-      //If they are a global admin, we return all.
+      logger.info(`Returned ${jobTypes.length} job types for admin user`);
       return jobTypes;
     }),
+
   update: protectedProcedure
     .input(
       z.object({
@@ -190,36 +194,38 @@ export const jobTypesRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      //Grab the job type from the db
+      logger.info(`Attempting to update job type ${input.id}`);
       const jobType = await ctx.db.query.jobTypes.findFirst({
         where: (jobTypes, { eq }) => eq(jobTypes.id, input.id),
       });
 
-      //Throw a 400 if none found
       if (!jobType) {
+        logger.warn(`Job type not found for update: ${input.id}`);
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Job type not found",
         });
       }
 
-      //Make sure the user either created the job type or is a global admin
       if (
         jobType.createdBy !== ctx.session.user.id &&
         ctx.session.user.role !== 1
       ) {
-        logger.warning(
+        logger.warn(
           `Unauthorized attempt to update job type with id ${input.id} by user with id ${ctx.session.user.id}`,
         );
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
-      //Update the job type
-      return await ctx.db
+      logger.info(`Updating job type ${input.id}`);
+      const result = await ctx.db
         .update(jobTypes)
         .set(input)
         .where(eq(jobTypes.id, input.id));
+      logger.info(`Job type ${input.id} updated successfully`);
+      return result;
     }),
+
   create: protectedProcedure
     .input(
       z.object({
@@ -241,23 +247,21 @@ export const jobTypesRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      /*
-        If an organisationId is not provided, the job type will be globally accessible.
-        Only global admins can do this.
-        */
+      logger.info(`Attempting to create new job type`);
       if (!input.organisationId && ctx.session.user.role !== 1) {
-        logger.warning(
+        logger.warn(
           `Unauthorized attempt to create global job type by user with id ${ctx.session.user.id}`,
         );
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
-      //Ensure the user is at least a moderator in the organisation if provided
       if (!!input.organisationId && ctx.session.user.role !== 1) {
+        logger.info(
+          `Checking user role in organisation ${input.organisationId}`,
+        );
         const org = await ctx.db.query.organisationMembers.findFirst({
           where: (organisationMembers, { eq, and }) =>
             and(
-              //The if statement ensures organisationId is not null but TS isn't picking it up for some reason
               eq(organisationMembers.organisationId, input.organisationId!),
               eq(organisationMembers.userId, ctx.session.user.id),
               eq(organisationMembers.role, 2),
@@ -265,15 +269,15 @@ export const jobTypesRouter = createTRPCRouter({
         });
 
         if (!org) {
-          logger.warning(
-            `Unauthorized attempt to create job type for organisationId ${Input.organisationId} by user with id ${ctx.session.user.id}`,
+          logger.warn(
+            `Unauthorized attempt to create job type for organisationId ${input.organisationId} by user with id ${ctx.session.user.id}`,
           );
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
       }
 
       return await ctx.db.transaction(async (tx) => {
-        //Insert the job type
+        logger.info(`Creating new job type`);
         const jobType = (
           await tx
             .insert(jobTypes)
@@ -289,14 +293,17 @@ export const jobTypesRouter = createTRPCRouter({
         )[0];
 
         if (!jobType) {
+          logger.error(`Failed to create job type`);
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
           });
         }
 
         try {
-          //Insert the parameters
           if (input.parameters) {
+            logger.info(
+              `Inserting ${input.parameters.length} parameters for job type ${jobType.id}`,
+            );
             const toInsert = input.parameters.map((param) => ({
               ...param,
               jobTypeId: jobType.id,
@@ -305,11 +312,17 @@ export const jobTypesRouter = createTRPCRouter({
             await tx.insert(jobTypeParameters).values(toInsert);
           }
         } catch (e) {
+          logger.error(
+            `Failed to insert parameters for job type ${jobType.id}`,
+            { cause: e },
+          );
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", cause: e });
         }
 
-        //Share with the organisation
         if (!!input.organisationId) {
+          logger.info(
+            `Sharing job type ${jobType.id} with organisation ${input.organisationId}`,
+          );
           const share = await tx
             .insert(sharedJobTypes)
             .values({
@@ -319,12 +332,16 @@ export const jobTypesRouter = createTRPCRouter({
             .returning({ id: sharedJobTypes.id });
 
           if (!share) {
+            logger.error(
+              `Failed to share job type ${jobType.id} with organisation ${input.organisationId}`,
+            );
             throw new TRPCError({
               code: "INTERNAL_SERVER_ERROR",
             });
           }
         }
 
+        logger.info(`Successfully created job type ${jobType.id}`);
         return jobType;
       });
     }),

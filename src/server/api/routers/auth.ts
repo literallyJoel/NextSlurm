@@ -1,38 +1,23 @@
 import { z } from "zod";
 import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
-import { eq } from "drizzle-orm";
-import { sessions, users } from "@/server/db/schema";
 import argon2 from "argon2";
 import logger from "@/logging/logger";
+import { obscureEmail } from "@/server/helpers/authHelper";
+
 
 export const authRouter = createTRPCRouter({
-  //Handles logins for local accounts
   login: publicProcedure
     .input(
       z.object({
         email: z.string().email(),
-        password: z
-          .string()
-          .min(8)
-          //Contains an uppercase
-          .regex(/[A-Z]/)
-          //Contains a lowercase character
-          .regex(/\d/)
-          //Contains a special character
-          .regex(/\W/),
+        password: z.string().min(8).regex(/[A-Z]/).regex(/\d/).regex(/\W/),
       }),
-      /*
-    We explicitly define the output shape for this, as this function deals 
-    with sensitive information, such as the (hashed) user password. So we take 
-    every precaution to ensure only the intended data is returned.
-    */
     )
     .output(
       z
         .object({
           id: z.string().uuid(),
           name: z.string(),
-          //We store role as an number rather than a bool so we can extend more easily later
           role: z.number().min(0).max(1),
           email: z.string().email(),
           requresReset: z.boolean(),
@@ -40,7 +25,8 @@ export const authRouter = createTRPCRouter({
         .or(z.undefined()),
     )
     .mutation(async ({ ctx, input }) => {
-      //Grab the user from the db using their email.
+      logger.info(`Login attempt for email: ${input.email}`);
+
       const user = await ctx.db.query.users.findFirst({
         where: (users, { eq }) => eq(users.email, input.email),
         columns: {
@@ -53,25 +39,40 @@ export const authRouter = createTRPCRouter({
         },
       });
 
-      //If there's no password, it means it's not a local account.
-      if (!user?.password) {
-        logger.warning(
-          `Attempted login with email ${input.email}, but account is not local`,
+      if (!user) {
+        logger.warn(
+          `Login attempt failed: User not found for email ${obscureEmail(input.email)}`,
         );
         return undefined;
       }
 
-      //Argon2 Comparison
+      if (!user.password) {
+        logger.warn(
+          `Login attempt failed: Account for email ${obscureEmail(input.email)} is not a local account`,
+        );
+        return undefined;
+      }
+
       const passwordMatches = await argon2.verify(
         user.password,
         input.password,
       );
 
       if (!passwordMatches) {
-        logger.warning(
-          `Attempted login with email ${input.email}, but password was incorrect`,
+        logger.warn(
+          `Login attempt failed: Incorrect password for email ${obscureEmail(input.email)}`,
         );
         return undefined;
+      }
+
+      logger.info(
+        `Successful login for user: ${user.id} (${obscureEmail(user.email)})`,
+      );
+
+      if (user.requiresReset) {
+        logger.info(
+          `User ${user.id} (${obscureEmail(user.email)}) requires password reset`,
+        );
       }
 
       return {

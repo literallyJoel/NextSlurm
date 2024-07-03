@@ -17,8 +17,8 @@ const encrypt = z
     return crypto.AES.encrypt(input.plaintext, env.NEXTAUTH_SECRET).toString();
   });
 
-export const providersRouter = createTRPCRouter({
-  create: globalAdminProcedure
+export const configRouter = createTRPCRouter({
+  createProvider: globalAdminProcedure
     .input(
       //Allows either a single provider, or an array of providers to be passed in
       z
@@ -62,7 +62,7 @@ export const providersRouter = createTRPCRouter({
       }
     }),
 
-  remove: globalAdminProcedure
+  removeProvider: globalAdminProcedure
     .input(z.object({ name: z.string() }))
     .mutation(async ({ ctx, input }) => {
       await ctx.db
@@ -70,10 +70,11 @@ export const providersRouter = createTRPCRouter({
         .where(eq(providerConfiguration.name, input.name));
     }),
   //This is public because the login screen needs to be able to grab the providers
-  get: publicProcedure.query(async ({ ctx }) => {
-    return await ctx.db
-      .select({ name: providerConfiguration.name })
-      .from(providerConfiguration)
-      .all();
+  getProvider: publicProcedure.query(async ({ ctx }) => {
+    return await ctx.db.query.providerConfiguration.findMany({
+      columns: {
+        name: true,
+      },
+    });
   }),
 });

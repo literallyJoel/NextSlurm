@@ -1,7 +1,7 @@
 import { authRouter } from "./routers/auth";
 import { createCallerFactory, createTRPCRouter } from "@/server/api/trpc";
 import { organisationsRouter } from "./routers/organisations";
-import { providersRouter } from "./routers/providers";
+import { configRouter } from "./routers/config";
 import { setupRouter } from "./routers/setup";
 import { usersRouter } from "./routers/users";
 import { jobTypesRouter } from "./routers/jobtypes";
@@ -15,7 +15,7 @@ import { jobsRouter } from "./routers/jobs";
 export const appRouter = createTRPCRouter({
   auth: authRouter,
   organisations: organisationsRouter,
-  providers: providersRouter,
+  config: configRouter,
   setup: setupRouter,
   users: usersRouter,
   jobTypes: jobTypesRouter,

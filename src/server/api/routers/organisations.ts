@@ -9,73 +9,7 @@ import {
 } from "../trpc";
 import { TRPCError } from "@trpc/server";
 import logger from "@/logging/logger";
-
-const isMember = z
-  .function()
-  .args(
-    z.object({
-      organisationId: z.string().uuid(),
-      userId: z.string().uuid(),
-      db: z.any(),
-      role: z.number().min(0).max(2).optional(),
-    }),
-  )
-  .returns(z.promise(z.boolean()))
-  .implement(async (input) => {
-    const { organisationId, userId, role } = input;
-
-    const whereClause = role
-      ? and(
-          eq(organisationMembers.organisationId, organisationId),
-          and(
-            eq(organisationMembers.userId, userId),
-            eq(organisationMembers.role, role),
-          ),
-        )
-      : and(
-          eq(organisationMembers.organisationId, organisationId),
-          eq(organisationMembers.userId, userId),
-        );
-
-    const orgMembers = db.query.organisationMembers.findFirst({
-      where: whereClause,
-    });
-
-    return !!orgMembers;
-  });
-
-const isGlobalOrOrgAdmin = z
-  .function()
-  .args(
-    z.object({
-      organisationId: z.string().uuid(),
-      userId: z.string().uuid(),
-      role: z.number().min(0).max(1),
-      db: z.any(),
-    }),
-  )
-  .returns(z.promise(z.boolean()))
-  .implement(async (input) => {
-    if (input.role === 1) {
-      logger.info(`User ${input.userId} authorized as global admin`);
-      return true;
-    }
-
-    const isOrgAdmin = await isMember({
-      organisationId: input.organisationId,
-      userId: input.userId,
-      db: input.db,
-      role: 2,
-    });
-
-    if (!isOrgAdmin) {
-      logger.warn(
-        `User ${input.userId} attempted unauthorized action for organisation ${input.organisationId}`,
-      );
-    }
-
-    return isOrgAdmin;
-  });
+import { isGlobalOrOrgAdmin, isMember } from "@/server/helpers/organisations";
 
 export const organisationsRouter = createTRPCRouter({
   create: globalAdminProcedure
@@ -196,9 +130,14 @@ export const organisationsRouter = createTRPCRouter({
           `Global admin ${ctx.session.user.id} requesting all organisations`,
         );
         if (ctx.session.user.role !== 1) {
+          logger.warn(
+            `Unauthorized attempt to get all organisations by user ${ctx.session.user.id}`,
+          );
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
-        return (await ctx.db.select().from(organisations).all()) ?? [];
+        const orgs = await ctx.db.select().from(organisations).all();
+        logger.info(`Returned ${orgs.length} organisations`);
+        return orgs ?? [];
       }
 
       const { organisationId, user } = input;
@@ -215,16 +154,19 @@ export const organisationsRouter = createTRPCRouter({
           });
 
           if (!isOrgMember) {
+            logger.warn(
+              `Unauthorized attempt to get organisation ${organisationId} by user ${ctx.session.user.id}`,
+            );
             throw new TRPCError({ code: "UNAUTHORIZED" });
           }
         }
 
-        return (
-          (await ctx.db
-            .select()
-            .from(organisations)
-            .where(eq(organisations.id, organisationId))) ?? []
-        );
+        const org = await ctx.db
+          .select()
+          .from(organisations)
+          .where(eq(organisations.id, organisationId));
+        logger.info(`Returned information for organisation ${organisationId}`);
+        return org ?? [];
       }
 
       if (user) {
@@ -233,30 +175,35 @@ export const organisationsRouter = createTRPCRouter({
           ctx.session.user.role !== 1 &&
           ctx.session.user.id !== user.userId
         ) {
+          logger.warn(
+            `Unauthorized attempt to get organisations for user ${user.userId} by user ${ctx.session.user.id}`,
+          );
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
 
-        return (
-          (await ctx.db
-            .select({
-              id: organisations.id,
-              name: organisations.name,
-              userRole: organisationMembers.role,
-            })
-            .from(organisations)
-            .leftJoin(
-              organisationMembers,
-              eq(organisations.id, organisationMembers.organisationId),
-            )
-            .where(
-              user.role
-                ? and(
-                    eq(organisationMembers.userId, user.userId),
-                    eq(organisationMembers.role, user.role),
-                  )
-                : eq(organisationMembers.userId, user.userId),
-            )) ?? []
+        const orgs = await ctx.db
+          .select({
+            id: organisations.id,
+            name: organisations.name,
+            userRole: organisationMembers.role,
+          })
+          .from(organisations)
+          .leftJoin(
+            organisationMembers,
+            eq(organisations.id, organisationMembers.organisationId),
+          )
+          .where(
+            user.role
+              ? and(
+                  eq(organisationMembers.userId, user.userId),
+                  eq(organisationMembers.role, user.role),
+                )
+              : eq(organisationMembers.userId, user.userId),
+          );
+        logger.info(
+          `Returned ${orgs.length} organisations for user ${user.userId}`,
         );
+        return orgs ?? [];
       }
     }),
 
@@ -289,6 +236,9 @@ export const organisationsRouter = createTRPCRouter({
           db: ctx.db,
         }))
       ) {
+        logger.warn(
+          `Unauthorized attempt to add member to organisation ${input.organisationId} by user ${ctx.session.user.id}`,
+        );
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
@@ -345,6 +295,9 @@ export const organisationsRouter = createTRPCRouter({
           db: ctx.db,
         }))
       ) {
+        logger.warn(
+          `Unauthorized attempt to remove member from organisation ${input.organisationId} by user ${ctx.session.user.id}`,
+        );
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
@@ -382,11 +335,14 @@ export const organisationsRouter = createTRPCRouter({
         });
 
         if (!isOrgMember) {
+          logger.warn(
+            `Unauthorized attempt to get member information for organisation ${input.organisationId} by user ${ctx.session.user.id}`,
+          );
           throw new TRPCError({ code: "UNAUTHORIZED" });
         }
       }
 
-      return await ctx.db
+      const members = await ctx.db
         .select({
           id: organisationMembers.userId,
           name: users.name,
@@ -403,8 +359,11 @@ export const organisationsRouter = createTRPCRouter({
               )
             : eq(organisationMembers.organisationId, input.organisationId),
         );
+      logger.info(
+        `Retrieved ${members.length} member(s) for organisation ${input.organisationId}`,
+      );
+      return members;
     }),
-
   updateMember: protectedProcedure
     .input(
       z.object({
@@ -425,6 +384,9 @@ export const organisationsRouter = createTRPCRouter({
           db: ctx.db,
         })
       ) {
+        logger.warn(
+          `Unauthorized attempt to update role for user ${input.userId} in organisation ${input.organisationId} by user ${ctx.session.user.id}`,
+        );
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 

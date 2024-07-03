@@ -1,3 +1,4 @@
+import logger from "./logging/logger";
 import amqp from "amqplib";
 import { exec } from "child_process";
 import fetch from "node-fetch";
@@ -9,9 +10,11 @@ async function consumeJobs() {
     const connection = await amqp.connect(amqpHost);
     const channel = await connection.createChannel();
     process.once("SIGINT", async () => {
-      console.log(" [x] Exiting...");
+      logger.info("[JobConsumer] User shutodwn initiated. Closing channel...");
       await channel.close();
+      logger.info("[JobConsumer] Channel closed. Closing connection...");
       await connection.close();
+      logger.info("[JobConsumer] Connection closed. Exiting...");
     });
     await channel.assertQueue("slurmJob", { durable: true });
     await channel.consume("slurmJob", async (msg) => {
@@ -28,7 +31,9 @@ async function consumeJobs() {
         authCode: string;
       };
 
-      console.log(" [x] Received %s", jobData);
+      logger.info(
+        `[JobConsumer] Received data ${JSON.stringify({ ...jobData, authCode: undefined })}`,
+      );
 
       try {
         const execAsync = (command: string) => {
@@ -44,7 +49,12 @@ async function consumeJobs() {
           .split(" ")
           .pop();
 
-        if (!slurmId) throw new Error("Failed to retrieve Slurm ID");
+        if (!slurmId) {
+          logger.error(
+            `[JobConsumer] Failed to retrieve Slurm ID for job with ID ${jobData.jobId}. Status of job cannot be confirmed.`,
+          );
+          throw new Error("Failed to retrieve Slurm ID");
+        }
 
         const submitDependentJob = async (dependency: string) => {
           await execAsync(
@@ -57,7 +67,10 @@ async function consumeJobs() {
           submitDependentJob("afternotok"),
         ]);
       } catch (e) {
-        console.error("Error scheduling job:", e);
+        logger.error(
+          `[JobConsumer] Error scheduling job with ID ${jobData.jobId}`,
+          { cause: e },
+        );
         // Mark job as failed on error
         await fetch(`${serverUrl}/api/jobs/${jobData.jobId}/markfailed`, {
           method: "POST",
@@ -68,7 +81,9 @@ async function consumeJobs() {
       }
     });
   } catch (e) {
-    console.error("Error consuming jobs:", e);
+    logger.error(`[JobConsumer] Failed to connect to amqp server`, {
+      cause: e,
+    });
   }
 }
 
