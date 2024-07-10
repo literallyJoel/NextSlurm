@@ -1,6 +1,1 @@
-# NextSlurm
-
-An easy-to-use web interface for using the Slurm scheduler. Work in progress, not ready for use.
-
-# Documentation
-Coming soon!
+Development on this has been abanoned in favour of [WebSlurm2](https://github.com/literallyJoel/WebSlurm2)
